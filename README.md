@@ -22,9 +22,25 @@ You need a free GitHub account. If you are not a collaborator yet, GitHub offers
 {"0228005931": {"name": "Max Hafen", "color": "#e4572e"}}
 ```
 
+## Series and results
+
+`site.json` holds the series. Days are grouped under them and scored on the **Preliminary results** page.
+
+```json
+"series": [
+  {"name": "Frostbite Series · Part 1", "start": "2026-11-07", "end": null, "discards": 0},
+  {"name": "Frostbite Series · Part 2", "start": null, "end": null, "discards": 0}
+]
+```
+
+- A series with no `start` has not begun. One with no `end` runs until the next series starts.
+- `discards` is the number of worst scores each boat drops.
+- `labels` marks days that are not part of a series, such as `"2026-03-22": "Test upload"`.
+- Scoring is low point. Boats that uploaded but did not finish a race score DNF; boats with no upload that day score DNC. Both score entries + 1. The official results in the weekly email take priority.
+
 ## Site settings
 
-`site.json` sets the title, the club line and the time zone used to group races into days.
+`site.json` also sets the title, the club line and the time zone used to group races into days.
 
 ## Run it locally
 
