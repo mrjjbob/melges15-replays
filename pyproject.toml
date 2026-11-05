@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sailreplay"
+version = "0.1.0"
+description = "Vakaros Atlas logs to race replays and performance analysis (no wind sensor needed)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "atlas-ble-client>=0.1.0b1"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+sailreplay = "sailreplay.cli:main"
+
+[tool.setuptools]
+packages = ["sailreplay"]
+
+[tool.setuptools.package-data]
+sailreplay = ["replay_template.html", "index_template.html"]

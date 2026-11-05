@@ -1,0 +1,726 @@
+<title>__TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: chart-plotter screen. Map fills the left, live fleet cards on the right, transport bar along the bottom; Debrief tab swaps the map for tables and charts. Single dark look on purpose (TV in a dim bar). */
+:root {
+  --water: #0d1e29;
+  --water-2: #122a39;
+  --panel: #091620;
+  --panel-2: #0f2230;
+  --ink: #e4eef3;
+  --muted: #86a1b0;
+  --rule: #213c4c;
+  --accent: #f2b33d;
+  --ok: #5fc37a;
+  --bad: #ff6461;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--panel); color: var(--ink); font: 15px/1.45 var(--f-body); overflow: hidden; }
+* { box-sizing: border-box; }
+button { font: inherit; color: inherit; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; }
+
+/* header */
+.top { display: flex; align-items: center; gap: 18px; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--rule); background: var(--panel); flex-wrap: wrap; }
+.title { display: flex; flex-direction: column; min-width: 0; }
+.title .home { font: 600 12px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-decoration: none; margin-bottom: 4px; }
+.title .home:hover { color: var(--ink); }
+.title h1 { margin: 0; font: 600 26px/1 var(--f-display); letter-spacing: .01em; text-wrap: balance; }
+.title .sub { color: var(--muted); font-size: 13px; }
+.clock { margin-left: auto; display: flex; align-items: baseline; gap: 10px; }
+.clock .lbl { font: 600 12px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.clock .val { font: 700 40px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--accent); min-width: 4.2ch; text-align: right; }
+.races { display: flex; gap: 4px; flex-wrap: wrap; }
+.races button { border: 1px solid var(--rule); background: var(--panel-2); color: var(--muted); border-radius: 8px; min-width: 40px; padding: 6px 10px; font: 600 15px/1 var(--f-display); letter-spacing: .04em; cursor: pointer; font-variant-numeric: tabular-nums; }
+.races button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #1a1205; }
+.tabs { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 3px; }
+.tabs button { background: none; border: 0; padding: 6px 14px; border-radius: 6px; font: 600 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--water-2); color: var(--ink); }
+
+/* replay view */
+.view { min-height: 0; }
+.replay { display: grid; grid-template-columns: 1fr 340px; height: 100%; min-height: 0; }
+.mapwrap { position: relative; background: var(--water); min-height: 0; overflow: hidden; touch-action: none; }
+canvas#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+canvas#map.drag { cursor: grabbing; }
+.windbox { position: absolute; top: 14px; right: 14px; background: rgba(9,22,32,.82); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; display: grid; grid-template-columns: auto auto auto; gap: 4px 14px; align-items: center; }
+.windbox canvas { grid-row: span 1; }
+.windbox .col { display: grid; gap: 4px; }
+.windbox .sh { font: 700 34px/0.9 var(--f-display); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 3.2ch; }
+.windbox .sh.right { color: var(--ok); }
+.windbox .sh.left { color: var(--bad); }
+.windbox .shc { font: 600 10.5px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.windbox .k { font: 600 11px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.windbox .v { font: 700 26px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--accent); }
+.windbox .src { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; max-width: 30ch; line-height: 1.35; }
+.windbox .src b { color: var(--ink); font-weight: 600; }
+.maptools { position: absolute; left: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { background: rgba(9,22,32,.82); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 11px; font: 600 13px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--muted); }
+
+.fleet { background: var(--panel); border-left: 1px solid var(--rule); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.fleet .hd { display: flex; justify-content: space-between; font: 600 12px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); padding: 4px 4px 2px; }
+.boat { display: grid; grid-template-columns: 26px 1fr auto auto; gap: 4px 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; cursor: pointer; text-align: left; width: 100%; }
+.boat[aria-pressed="true"] { border-color: var(--bc); box-shadow: inset 3px 0 0 var(--bc); }
+.boat .pos { font: 700 24px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; }
+.boat .nm { font: 600 19px/1.1 var(--f-display); display: flex; align-items: center; gap: 8px; min-width: 0; }
+.boat .nm i { width: 10px; height: 10px; border-radius: 50%; background: var(--bc); flex: none; }
+.boat .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat .gap { font: 500 13px/1 var(--f-data); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.boat .stats { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.stat .k { font: 600 10.5px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font: 600 22px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.stat .v small { font: 500 12px var(--f-body); color: var(--muted); margin-left: 1px; }
+.mode { font: 600 11px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; border: 1px solid var(--rule); color: var(--muted); }
+.mode.up { color: #9fd4ff; border-color: #2d5a78; }
+.mode.down { color: #ffd38a; border-color: #6b5224; }
+.mode.fin { color: var(--ok); border-color: #2c5a3a; }
+.mode.ocs { color: var(--bad); border-color: #6b2a2a; }
+
+/* transport */
+.transport { display: grid; grid-template-columns: auto auto 1fr auto; gap: 14px; align-items: center; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-top: 1px solid var(--rule); background: var(--panel); }
+.play { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--accent); color: #1a1205; cursor: pointer; display: grid; place-items: center; }
+.play svg { width: 20px; height: 20px; fill: currentColor; }
+.speeds { display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 3px; }
+.speeds button { border: 0; background: none; padding: 6px 9px; border-radius: 6px; font: 600 15px/1 var(--f-data); color: var(--muted); cursor: pointer; }
+.speeds button[aria-pressed="true"] { background: var(--water-2); color: var(--ink); }
+.scrub { position: relative; height: 44px; min-width: 0; }
+.scrub canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+.tread { font: 500 14px/1.2 var(--f-data); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* debrief */
+.debrief { height: 100%; overflow-y: auto; background: var(--panel); }
+.debrief .inner { max-width: 1180px; margin: 0 auto; padding-block: 22px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.debrief h2 { margin: 0 0 10px; font: 600 24px/1.1 var(--f-display); letter-spacing: .02em; }
+.debrief p.note { margin: 0 0 10px; color: var(--muted); max-width: 70ch; }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--rule); }
+th { font: 600 12px/1.2 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); background: var(--panel-2); position: sticky; top: 0; }
+td { font: 400 14px/1.2 var(--f-data); }
+th:first-child, td:first-child { text-align: left; font-family: var(--f-body); font-weight: 600; }
+td.nm i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
+tr:last-child td { border-bottom: 0; }
+tr.jump { cursor: pointer; }
+table.wind td:last-child, table.wind th:last-child { text-align: left; font-family: var(--f-body); white-space: normal; }
+tr.jump:hover td, tr.jumprace:hover td { background: var(--water-2); }
+tr.jumprace { cursor: pointer; }
+tr.jumprace.here td { background: var(--water-2); }
+tr.jumprace .flag { color: var(--accent); }
+.best { color: var(--ok); }
+.flag { color: var(--bad); font-weight: 500; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.chartcard { border: 1px solid var(--rule); border-radius: 10px; padding: 14px; background: var(--panel-2); min-width: 0; }
+.chartcard h3 { margin: 0 0 2px; font: 600 18px/1.2 var(--f-display); }
+.chartcard .note { font-size: 13px; }
+.chartcard canvas { width: 100%; height: 260px; display: block; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+select { background: var(--panel-2); border: 1px solid var(--rule); color: var(--ink); border-radius: 8px; padding: 6px 10px; font: inherit; }
+
+@media (max-width: 860px) {
+  body { overflow: auto; }
+  .app { height: auto; min-height: 100%; }
+  .replay { grid-template-columns: 1fr; height: auto; }
+  .mapwrap { height: 62vh; min-height: 320px; }
+  .fleet { border-left: 0; border-top: 1px solid var(--rule); }
+  .transport { grid-template-columns: auto 1fr; position: sticky; bottom: 0; }
+  .transport .scrub { grid-column: 1 / -1; order: 3; }
+  .transport .tread { order: 2; }
+  .clock .val { font-size: 30px; }
+  .windbox { top: auto; bottom: 46px; right: 10px; padding: 8px 10px; }
+  .windbox .src { display: none; }
+  .windbox .v { font-size: 22px; }
+  .maptools { right: 10px; }
+  .charts { grid-template-columns: 1fr; }
+  .debrief { height: auto; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="title"><a class="home" id="home" href="../index.html" hidden>← All days</a><h1 id="title"></h1><div class="sub" id="sub"></div></div>
+    <nav class="races" id="races" aria-label="Races" hidden></nav>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-replay" aria-selected="true">Replay</button>
+      <button role="tab" id="tab-debrief" aria-selected="false">Debrief</button>
+    </div>
+    <div class="clock"><span class="lbl" id="clockLbl">Race time</span><span class="val" id="clock">0:00</span></div>
+  </header>
+
+  <main class="view">
+    <section class="replay" id="view-replay">
+      <div class="mapwrap" id="mapwrap">
+        <canvas id="map" aria-label="Race map"></canvas>
+        <div class="maptools">
+          <button class="chip" id="trail" aria-pressed="true">Trail 2 min</button>
+          <button class="chip" id="orient" aria-pressed="true">Wind up</button>
+          <button class="chip" id="fit" aria-pressed="false">Fit fleet</button>
+          <button class="chip" id="loop" aria-pressed="false">Loop</button>
+          <button class="chip" id="full" aria-pressed="false">Full screen</button>
+        </div>
+        <div class="windbox" id="windbox">
+          <canvas id="windArrow" width="56" height="56" aria-hidden="true"></canvas>
+          <div class="col"><span class="k">Wind from</span><span class="v" id="twd">—</span></div>
+          <div class="col"><span class="k">Shift</span><span class="sh" id="shift">—</span><span class="shc" id="shiftc"></span></div>
+          <span class="src" id="twdSrc"></span>
+        </div>
+      </div>
+      <aside class="fleet" id="fleet"><div class="hd"><span>Fleet</span><span id="rankBy">Made good</span></div></aside>
+    </section>
+    <section class="debrief" id="view-debrief" hidden><div class="inner" id="debrief"></div></section>
+  </main>
+
+  <footer class="transport">
+    <button class="play" id="play" aria-label="Play"><svg viewBox="0 0 20 20" id="playIcon"><path d="M5 3l12 7-12 7z"/></svg></button>
+    <div class="speeds" id="speeds"></div>
+    <div class="scrub" id="scrubwrap"><canvas id="scrub" aria-label="Timeline"></canvas></div>
+    <div class="tread" id="tread"></div>
+  </footer>
+</div>
+
+<script type="application/json" id="race-data">__RACE_JSON__</script>
+<script>
+(() => {
+const DATA = JSON.parse(document.getElementById("race-data").textContent);
+const RACES = DATA.races || [DATA];
+const DAY = DATA.day || null;
+const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
+let ctl = null, cur = null;
+function parseHash() {
+  const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
+  if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
+  return { k: cur ? cur.k : 0, view: h === "debrief" ? "debrief" : "replay" };
+}
+function route() {
+  const { k, view } = parseHash();
+  if (cur && cur.k === k) { cur.api.show(view); return; }
+  if (ctl) ctl.abort();
+  APP.innerHTML = APP_HTML;
+  ctl = new AbortController();
+  cur = { k, api: run(RACES[k], k, ctl.signal, view) };
+}
+window.addEventListener("hashchange", route);
+route();
+
+function run(R, K, SIG, VIEW) {
+const ON = { signal: SIG };
+const hashFor = v => "r" + (K + 1) + (v === "debrief" ? "-debrief" : "");
+const M = R.meta, HZ = M.hz, N = M.n, GUN = M.gun_s;
+const boats = R.boats;
+const $ = id => document.getElementById(id);
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { water: cssv("--water"), ink: cssv("--ink"), muted: cssv("--muted"), rule: cssv("--rule"), accent: cssv("--accent"), ok: cssv("--ok"), bad: cssv("--bad"), panel: cssv("--panel") };
+
+// ---------- formatting
+const fmtClock = s => { const neg = s < 0; s = Math.abs(Math.round(s)); const m = Math.floor(s / 60), x = s % 60; return (neg ? "−" : "") + m + ":" + String(x).padStart(2, "0"); };
+const fmtNum = (v, d = 1) => v == null || isNaN(v) ? "—" : Number(v).toFixed(d);
+const raceT = i => i / HZ - (GUN ?? 0);
+const date = new Date(M.t0_ms);
+$("title").textContent = M.title;
+document.title = DAY ? DAY.title : M.title;
+$("sub").textContent = (M.day_title || date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + " · " + (boats.length === 1 ? boats[0].name : boats.length + " boats") + (R.line ? " · line " + R.line.length_m + " m" : M.course && M.course.length_m ? " · course " + M.course.length_m + " m" : "");
+if (DAY && DAY.home) { $("home").href = DAY.home; $("home").hidden = false; }
+if (RACES.length > 1) {
+  const nav = $("races"); nav.hidden = false;
+  RACES.forEach((r, j) => { const b = document.createElement("button"); b.textContent = "R" + (j + 1); b.title = r.meta.title; b.setAttribute("aria-current", String(j === K));
+    b.onclick = () => { location.hash = "r" + (j + 1) + ($("view-debrief").hidden ? "" : "-debrief"); }; nav.appendChild(b); });
+}
+
+// ---------- projection
+const lat0 = M.origin[0], lon0 = M.origin[1];
+const mlat = 111320, mlon = 111320 * Math.cos(lat0 * Math.PI / 180);
+for (const b of boats) {
+  const t = b.track; b.wx = new Float64Array(N); b.wy = new Float64Array(N); b.x = new Float64Array(N); b.y = new Float64Array(N); b.ok = new Uint8Array(N);
+  for (let i = 0; i < N; i++) { if (t.lat[i] == null) continue; b.wx[i] = (t.lon[i] - lon0) * mlon; b.wy[i] = (t.lat[i] - lat0) * mlat; b.ok[i] = 1; }
+}
+const toXY = (lat, lon) => [(lon - lon0) * mlon, (lat - lat0) * mlat];
+const line = R.line ? { pin: toXY(...R.line.pin), boat: toXY(...R.line.boat) } : null;
+const LE = M.line_est;
+const lineEst = LE ? { pin: toXY(...LE.pin_end), rc: toXY(...LE.rc), fin: toXY(...LE.finish_end) } : null;
+// Map orientation: "wind up" turns the chart so the course runs up the screen, into the wind.
+const WIND_UP = M.twd_global != null ? (R.wind.twd_avg ?? M.twd_global) : 0;
+let ROT = 0, RC_ = 1, RS_ = 0;
+const rot = p => [p[0] * RC_ - p[1] * RS_, p[0] * RS_ + p[1] * RC_];
+function applyRot(deg) {
+  ROT = deg; const r = deg * Math.PI / 180; RC_ = Math.cos(r); RS_ = Math.sin(r);
+  for (const b of boats) for (let i = 0; i < N; i++) { b.x[i] = b.wx[i] * RC_ - b.wy[i] * RS_; b.y[i] = b.wx[i] * RS_ + b.wy[i] * RC_; }
+}
+applyRot(WIND_UP);
+
+// marks inferred from where boats rounded
+const marks = [];
+if (M.marks && M.marks.length) {
+  const seen = {};
+  for (const m of M.marks) { const [x, y] = toXY(m.lat, m.lon); const label = { windward: "Windward mark", leeward: "Leeward mark", start: "Start (est.)", finish: "Finish (est.)" }[m.kind] || m.kind;
+    if (lineEst && (m.kind === "start" || m.kind === "finish")) continue;
+    if (marks.some(c => c.label === label && Math.hypot(c.x - x, c.y - y) < 40)) continue; marks.push({ x, y, label }); }
+} else {
+  const groups = {};
+  for (const b of boats) for (const m of b.manoeuvres) if (m.kind === "rounding" && m.lat != null) {
+    const [x, y] = toXY(m.lat, m.lon);
+    const g = groups[m.label] = groups[m.label] || [];
+    let hit = g.find(c => Math.hypot(c.x - x, c.y - y) < 120);
+    if (!hit) { hit = { x: 0, y: 0, n: 0, label: m.label, pts: [] }; g.push(hit); }
+    hit.pts.push([x, y]); hit.n++; hit.x = hit.pts.reduce((a, p) => a + p[0], 0) / hit.n; hit.y = hit.pts.reduce((a, p) => a + p[1], 0) / hit.n;
+  }
+  for (const k in groups) for (const c of groups[k]) if (c.n >= Math.min(2, boats.length)) marks.push(c);
+}
+
+// ---------- state
+const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: 10, follow: null, trail: 120, loop: false,
+  view: { cx: 0, cy: 0, scale: 1 }, userMoved: false };
+const SPEEDS = [1, 5, 10, 30, 60];
+const TRAILS = [[30, "Trail 30 s"], [120, "Trail 2 min"], [600, "Trail 10 min"], [Infinity, "Trail full"]];
+
+// ---------- canvas setup
+const map = $("map"), ctx = map.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  const r = map.getBoundingClientRect(); W = r.width; H = r.height;
+  map.width = Math.round(W * DPR); map.height = Math.round(H * DPR);
+  if (!state.userMoved) fitAll();
+  sizeScrub(); draw(); drawScrub();
+}
+function bounds(idx0, idx1) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const b of boats) for (let i = idx0; i < idx1; i += 2) if (b.ok[i]) { x0 = Math.min(x0, b.x[i]); x1 = Math.max(x1, b.x[i]); y0 = Math.min(y0, b.y[i]); y1 = Math.max(y1, b.y[i]); }
+  return [x0, x1, y0, y1];
+}
+function fitTo([x0, x1, y0, y1], pad = 60) {
+  if (!isFinite(x0)) return;
+  state.view.cx = (x0 + x1) / 2; state.view.cy = (y0 + y1) / 2;
+  state.view.scale = Math.min((W - pad * 2) / Math.max(40, x1 - x0), (H - pad * 2) / Math.max(40, y1 - y0));
+}
+function fitAll() { fitTo(bounds(0, N)); }
+const sx = x => W / 2 + (x - state.view.cx) * state.view.scale;
+const sy = y => H / 2 - (y - state.view.cy) * state.view.scale;
+
+// ---------- interpolation
+function at(b, fi) {
+  const i = Math.floor(fi), f = fi - i;
+  if (i < 0 || i >= N || !b.ok[i]) return null;
+  const j = Math.min(N - 1, i + 1);
+  const g = b.ok[j] ? f : 0;
+  const t = b.track;
+  const lerpA = (a, c) => { if (a == null) return c; if (c == null) return a; let d = ((c - a + 540) % 360) - 180; return (a + d * g + 360) % 360; };
+  const L = (a, c) => a == null ? c : c == null ? a : a + (c - a) * g;
+  return { x: L(b.x[i], b.x[j]), y: L(b.y[i], b.y[j]), sog: L(t.sog[i], t.sog[j]), cog: lerpA(t.cog[i], t.cog[j]), hdg: lerpA(t.hdg[i], t.hdg[j]),
+    heel: L(t.heel[i], t.heel[j]), twa: t.twa[i], vmg: L(t.vmg[i], t.vmg[j]), mg: L(t.mg[i], t.mg[j]), mode: t.mode[i] };
+}
+function twdAt(fi) { if (!R.wind.twd) return null; return R.wind.twd[Math.min(R.wind.twd.length - 1, Math.floor(fi / R.wind.every))]; }
+
+// ---------- drawing
+function niceStep(m) { const p = Math.pow(10, Math.floor(Math.log10(m))); for (const k of [1, 2, 5, 10]) if (k * p >= m) return k * p; return 10 * p; }
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = C.water; ctx.fillRect(0, 0, W, H);
+  if (state.follow != null) { const p = at(boats[state.follow], state.i); if (p) { state.view.cx = p.x; state.view.cy = p.y; } }
+  const sc = state.view.scale;
+  // grid every ~100 px
+  const step = niceStep(110 / sc);
+  ctx.strokeStyle = "rgba(134,161,176,0.10)"; ctx.lineWidth = 1; ctx.beginPath();
+  const gx0 = Math.floor((state.view.cx - W / 2 / sc) / step) * step, gy0 = Math.floor((state.view.cy - H / 2 / sc) / step) * step;
+  for (let x = gx0; x < state.view.cx + W / 2 / sc; x += step) { ctx.moveTo(sx(x) + .5, 0); ctx.lineTo(sx(x) + .5, H); }
+  for (let y = gy0; y < state.view.cy + H / 2 / sc; y += step) { ctx.moveTo(0, sy(y) + .5); ctx.lineTo(W, sy(y) + .5); }
+  ctx.stroke();
+  // scale bar + north
+  ctx.fillStyle = C.muted; ctx.strokeStyle = C.muted; ctx.lineWidth = 2;
+  const bar = step * sc; ctx.beginPath(); ctx.moveTo(18, H - 22); ctx.lineTo(18 + bar, H - 22); ctx.moveTo(18, H - 27); ctx.lineTo(18, H - 17); ctx.moveTo(18 + bar, H - 27); ctx.lineTo(18 + bar, H - 17); ctx.stroke();
+  ctx.font = "500 12px " + cssv("--f-data"); ctx.fillText(step >= 1000 ? step / 1000 + " km" : step + " m", 18, H - 32);
+  // north arrow (turns with the chart)
+  { const nx = 18 + bar + 34, ny = H - 30; ctx.save(); ctx.translate(nx, ny); ctx.rotate(-ROT * Math.PI / 180);
+    ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(5, 6); ctx.lineTo(0, 3); ctx.lineTo(-5, 6); ctx.closePath(); ctx.fillStyle = C.muted; ctx.fill();
+    ctx.rotate(ROT * Math.PI / 180); ctx.font = "600 11px " + cssv("--f-display"); ctx.textAlign = "left"; ctx.fillText("N", 12, 5); ctx.restore(); }
+
+  // start line
+  if (line) {
+    const a = rot(line.pin), b = rot(line.boat);
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = "rgba(228,238,243,0.7)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(sx(a[0]), sy(a[1])); ctx.lineTo(sx(b[0]), sy(b[1])); ctx.stroke(); ctx.setLineDash([]);
+    buoy(a, "Pin", "#ff9f40"); buoy(b, "Committee", "#e4eef3", true);
+  } else if (lineEst) {
+    // one line, square to the wind: pin ... committee boat ... finish mark
+    const a = rot(lineEst.pin), r = rot(lineEst.rc), f = rot(lineEst.fin);
+    ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = "rgba(228,238,243,0.6)"; ctx.beginPath(); ctx.moveTo(sx(a[0]), sy(a[1])); ctx.lineTo(sx(r[0]), sy(r[1])); ctx.stroke();
+    ctx.strokeStyle = "rgba(95,195,122,0.75)"; ctx.beginPath(); ctx.moveTo(sx(r[0]), sy(r[1])); ctx.lineTo(sx(f[0]), sy(f[1])); ctx.stroke(); ctx.setLineDash([]);
+    const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], lbl = (p, t) => { ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "center"; ctx.fillText(t, sx(p[0]), sy(p[1]) - 8); ctx.textAlign = "left"; };
+    lbl(mid(a, r), "START"); lbl(mid(r, f), "FINISH");
+    buoy(r, "Committee (est.)", "#e4eef3", true);
+  }
+  for (const m of marks) buoy(rot([m.x, m.y]), m.label, /mark/i.test(m.label) ? "#ff9f40" : "#e4eef3", !/mark/i.test(m.label));
+
+  // full tracks faint
+  const ii = Math.floor(state.i);
+  for (const b of boats) {
+    ctx.strokeStyle = b.color; ctx.globalAlpha = 0.16; ctx.lineWidth = 1.5; polyline(b, 0, N - 1); ctx.globalAlpha = 1;
+  }
+  // trails
+  for (const b of boats) {
+    const a = state.trail === Infinity ? 0 : Math.max(0, ii - Math.round(state.trail * HZ));
+    const grad = 6;
+    for (let k = 0; k < grad; k++) {
+      const s0 = a + Math.floor((ii - a) * k / grad), s1 = a + Math.floor((ii - a) * (k + 1) / grad);
+      ctx.strokeStyle = b.color; ctx.globalAlpha = 0.25 + 0.75 * (k + 1) / grad; ctx.lineWidth = 2.5; polyline(b, s0, s1 + 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // boats
+  boats.forEach((b, k) => {
+    const p = at(b, state.i); if (!p) return;
+    hull(sx(p.x), sy(p.y), (p.hdg ?? p.cog) - ROT, b.color, k === state.follow);
+    ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
+    ctx.strokeText(b.name, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(b.name, sx(p.x) + 12, sy(p.y) - 10);
+  });
+}
+function polyline(b, a, z) {
+  ctx.beginPath(); let pen = false;
+  for (let i = a; i <= Math.min(z, N - 1); i++) { if (!b.ok[i]) { pen = false; continue; } const X = sx(b.x[i]), Y = sy(b.y[i]); if (pen) ctx.lineTo(X, Y); else { ctx.moveTo(X, Y); pen = true; } }
+  ctx.stroke();
+}
+function hull(X, Y, hdg, color, sel) {
+  const s = Math.max(0.85, Math.min(2, state.view.scale * 0.9)); // grows a little when zoomed in
+  ctx.save(); ctx.translate(X, Y); ctx.rotate((hdg || 0) * Math.PI / 180);
+  ctx.beginPath(); ctx.moveTo(0, -11 * s); ctx.bezierCurveTo(5 * s, -5 * s, 5 * s, 4 * s, 3.6 * s, 8 * s); ctx.lineTo(-3.6 * s, 8 * s); ctx.bezierCurveTo(-5 * s, 4 * s, -5 * s, -5 * s, 0, -11 * s); ctx.closePath();
+  ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = sel ? 2.5 : 1.2; ctx.strokeStyle = sel ? C.ink : C.water; ctx.stroke();
+  ctx.restore();
+}
+function buoy(p, label, color, square) {
+  const X = sx(p[0]), Y = sy(p[1]);
+  ctx.fillStyle = color; ctx.strokeStyle = C.water; ctx.lineWidth = 2; ctx.beginPath();
+  if (square) ctx.rect(X - 5, Y - 5, 10, 10); else ctx.arc(X, Y, 6, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  ctx.font = "600 12px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.fillText(label.toUpperCase(), X + 10, Y + 16);
+}
+function drawWind() {
+  const twd = twdAt(state.i), cv = $("windArrow"), c = cv.getContext("2d");
+  const d = Math.min(2, window.devicePixelRatio || 1); if (cv.width !== 56 * d) { cv.width = 56 * d; cv.height = 56 * d; cv.style.width = "56px"; cv.style.height = "56px"; }
+  c.setTransform(d, 0, 0, d, 0, 0); c.clearRect(0, 0, 56, 56);
+  c.strokeStyle = C.rule; c.lineWidth = 1.5; c.beginPath(); c.arc(28, 28, 25, 0, Math.PI * 2); c.stroke();
+  { const a = -ROT * Math.PI / 180; c.fillStyle = C.muted; c.font = "600 9px " + cssv("--f-display"); c.textAlign = "center"; c.fillText("N", 28 + 19 * Math.sin(a), 28 - 19 * Math.cos(a) + 3); }
+  if (twd == null) { $("twd").textContent = "—"; return; }
+  c.save(); c.translate(28, 28); c.rotate((twd + 180 - ROT) * Math.PI / 180);
+  c.fillStyle = C.accent; c.beginPath(); c.moveTo(0, -17); c.lineTo(7, 4); c.lineTo(2, 2); c.lineTo(2, 17); c.lineTo(-2, 17); c.lineTo(-2, 2); c.lineTo(-7, 4); c.closePath(); c.fill(); c.restore();
+  $("twd").textContent = Math.round(twd) + "°";
+  const avg = R.wind.twd_avg, sh = $("shift"), shc = $("shiftc");
+  if (avg != null) {
+    const d = Math.round(((twd - avg + 540) % 360) - 180);
+    if (Math.abs(d) < 2) { sh.textContent = "0°"; sh.className = "sh"; shc.textContent = "steady"; }
+    else { sh.textContent = (d > 0 ? "+" : "−") + Math.abs(d) + "°"; sh.className = "sh " + (d > 0 ? "right" : "left"); shc.textContent = d > 0 ? "veered right" : "backed left"; }
+  }
+  const tws = R.wind.tws ? R.wind.tws[Math.min(R.wind.tws.length - 1, Math.floor(state.i / R.wind.every))] : null;
+  $("twdSrc").innerHTML = (avg != null ? `Race average <b>${avg}°</b>` : "") + (tws != null ? ` · about <b>${Math.round(tws)} kt</b>` : "") + `<br>${srcText}`;
+}
+const srcText = { manual: "set by hand", tacks: "estimated from the fleet's tacks", "start line": "square to the start line", "atlas tack headings": "from Atlas tack headings", none: "unknown, pass --twd" }[M.twd_source] || "";
+$("orient").textContent = "Wind up"; $("orient").setAttribute("aria-pressed", "true");
+$("orient").onclick = () => { const up = ROT === 0; applyRot(up ? WIND_UP : 0); $("orient").textContent = up ? "Wind up" : "North up"; $("orient").setAttribute("aria-pressed", String(up)); state.userMoved = false; fitAll(); refresh(); };
+if (M.twd_global == null) $("orient").hidden = true;
+
+// ---------- fleet cards
+const fleet = $("fleet");
+const cards = boats.map((b, k) => {
+  const el = document.createElement("button"); el.className = "boat"; el.style.setProperty("--bc", b.color); el.setAttribute("aria-pressed", "false");
+  el.innerHTML = `<span class="pos">–</span><span class="nm"><i></i><span>${esc(b.name)}</span></span><span class="gap"></span>
+  <div class="stats">
+    <div class="stat"><div class="k">Speed</div><div class="v" data-k="sog">—</div></div>
+    <div class="stat"><div class="k">VMG</div><div class="v" data-k="vmg">—</div></div>
+    <div class="stat"><div class="k">Wind ∠</div><div class="v" data-k="twa">—</div></div>
+    <div class="stat"><div class="k">Heel</div><div class="v" data-k="heel">—</div></div>
+  </div>`;
+  const tag = document.createElement("span"); tag.className = "mode"; el.querySelector(".gap").before(tag);
+  el.querySelector(".stats").style.gridColumn = "1 / -1";
+  el.addEventListener("click", () => { state.follow = state.follow === k ? null : k; if (state.follow == null) state.userMoved = false; refresh(); });
+  fleet.appendChild(el);
+  return { el, pos: el.querySelector(".pos"), gap: el.querySelector(".gap"), tag, v: Object.fromEntries([...el.querySelectorAll("[data-k]")].map(x => [x.dataset.k, x])) };
+});
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+
+function updateFleet() {
+  const ii = Math.floor(state.i), rt = raceT(state.i);
+  const rows = boats.map((b, k) => ({ k, b, p: at(b, state.i) }));
+  const finished = k => boats[k].summary.finish_s != null && state.i / HZ >= boats[k].summary.finish_s;
+  let order;
+  if (GUN != null && rt < 0) order = rows.slice();
+  else order = rows.slice().sort((a, c) => {
+    const fa = finished(a.k), fc = finished(c.k);
+    if (fa && fc) return a.b.summary.finish_s - c.b.summary.finish_s;
+    if (fa !== fc) return fa ? -1 : 1;
+    return (c.p?.mg ?? -1e9) - (a.p?.mg ?? -1e9);
+  });
+  $("rankBy").textContent = GUN != null && rt < 0 ? "Pre-start" : "Ranked by distance made good";
+  const leadMg = order[0]?.p?.mg ?? 0;
+  order.forEach((r, n) => {
+    const c = cards[r.k]; c.el.style.order = n + 1; c.el.setAttribute("aria-pressed", String(state.follow === r.k));
+    c.pos.textContent = GUN != null && rt < 0 ? "·" : n + 1;
+    const p = r.p;
+    const fin = finished(r.k);
+    if (fin) c.gap.textContent = fmtClock(r.b.summary.elapsed_s ?? 0);
+    else if (GUN != null && rt >= 0 && p && n > 0) c.gap.textContent = "−" + Math.max(0, Math.round(leadMg - p.mg)) + " m";
+    else c.gap.textContent = "";
+    const ocs = r.b.start?.ocs && rt >= 0 && rt < 25;
+    const md = fin ? ["fin", "Finished"] : ocs ? ["ocs", "Over early"] : p ? ({ up: ["up", "Upwind"], down: ["down", "Downwind"], reach: ["", "Reach"], slow: ["", "Slow"] }[p.mode] || ["", ""]) : ["", "No data"];
+    c.tag.className = "mode " + md[0]; c.tag.textContent = md[1];
+    c.v.sog.innerHTML = p ? fmtNum(p.sog) + "<small>kt</small>" : "—";
+    c.v.vmg.innerHTML = p && p.vmg != null ? fmtNum(p.vmg) + "<small>kt</small>" : "—";
+    c.v.twa.innerHTML = p && p.twa != null ? Math.abs(p.twa) + "°<small>" + (p.twa > 0 ? "S" : "P") + "</small>" : "—";
+    c.v.heel.innerHTML = p && p.heel != null ? fmtNum(p.heel, 0) + "°" : "—";
+  });
+}
+
+// ---------- timeline
+const scrub = $("scrub"), sctx = scrub.getContext("2d");
+let SW = 0, SH = 0;
+function sizeScrub() { const r = scrub.getBoundingClientRect(); SW = r.width; SH = r.height; scrub.width = Math.round(SW * DPR); scrub.height = Math.round(SH * DPR); }
+function drawScrub() {
+  sctx.setTransform(DPR, 0, 0, DPR, 0, 0); sctx.clearRect(0, 0, SW, SH);
+  const X = i => 8 + (SW - 16) * i / (N - 1);
+  sctx.fillStyle = C.rule; sctx.fillRect(8, SH / 2 - 3, SW - 16, 6);
+  sctx.fillStyle = C.accent; sctx.fillRect(8, SH / 2 - 3, X(state.i) - 8, 6);
+  // events of the followed boat (or roundings of all)
+  const evs = state.follow != null ? boats[state.follow].manoeuvres : boats.flatMap(b => b.manoeuvres.filter(m => m.kind === "rounding"));
+  for (const m of evs) { const x = X(m.t * HZ); sctx.fillStyle = m.kind === "rounding" ? "#ff9f40" : m.kind === "tack" ? "#9fd4ff" : "#ffd38a"; sctx.fillRect(x - 1, SH / 2 - 11, 2, 7); }
+  if (GUN != null) { const x = X(GUN * HZ); sctx.fillStyle = C.ink; sctx.fillRect(x - 1, 4, 2, SH - 8); sctx.font = "600 11px " + cssv("--f-display"); sctx.fillText(M.start_estimated ? "START" : "GUN", Math.min(x + 4, SW - 40), 12); }
+  for (const b of boats) if (b.summary.finish_s != null) { const x = X(b.summary.finish_s * HZ); sctx.fillStyle = b.color; sctx.fillRect(x - 1, SH / 2 + 5, 2, 7); }
+  const x = X(state.i); sctx.fillStyle = C.ink; sctx.beginPath(); sctx.arc(x, SH / 2, 8, 0, Math.PI * 2); sctx.fill();
+}
+function scrubTo(ev) { const r = scrub.getBoundingClientRect(); const f = Math.min(1, Math.max(0, (ev.clientX - r.left - 8) / (r.width - 16))); state.i = f * (N - 1); refresh(); }
+let scrubbing = false;
+scrub.addEventListener("pointerdown", e => { scrubbing = true; scrub.setPointerCapture(e.pointerId); scrubTo(e); });
+scrub.addEventListener("pointermove", e => { if (scrubbing) scrubTo(e); });
+scrub.addEventListener("pointerup", () => scrubbing = false);
+
+// ---------- transport
+const speeds = $("speeds");
+SPEEDS.forEach(s => { const b = document.createElement("button"); b.textContent = s + "×"; b.setAttribute("aria-pressed", String(s === state.speed)); b.onclick = () => setSpeed(s); speeds.appendChild(b); });
+function setSpeed(s) { state.speed = s; [...speeds.children].forEach(b => b.setAttribute("aria-pressed", String(b.textContent === s + "×"))); }
+let wake = null;
+async function keepAwake(on) { try { if (on && "wakeLock" in navigator) wake = await navigator.wakeLock.request("screen"); else if (wake) { await wake.release(); wake = null; } } catch (e) {} }
+function setPlaying(p) {
+  state.playing = p; $("play").setAttribute("aria-label", p ? "Pause" : "Play");
+  $("playIcon").innerHTML = p ? '<path d="M5 3h4v14H5zM11 3h4v14h-4z"/>' : '<path d="M5 3l12 7-12 7z"/>';
+  if (p && state.i >= N - 1) state.i = GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0;
+  keepAwake(p); last = performance.now(); if (p) requestAnimationFrame(tick);
+}
+$("play").onclick = () => setPlaying(!state.playing);
+let last = 0;
+function tick(now) {
+  if (!state.playing || SIG.aborted) return;
+  const dt = Math.min(0.25, (now - last) / 1000); last = now;
+  state.i += dt * state.speed * HZ;
+  if (state.i >= N - 1) { if (state.loop) state.i = GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0; else { state.i = N - 1; refresh(); setPlaying(false); return; } }
+  refresh(); requestAnimationFrame(tick);
+}
+function refresh() {
+  draw(); drawWind(); updateFleet(); drawScrub();
+  const rt = raceT(state.i);
+  $("clock").textContent = fmtClock(rt);
+  $("clockLbl").textContent = GUN != null && rt < 0 ? "To start" : "Race time";
+  const wall = new Date(M.t0_ms + state.i / HZ * 1000);
+  $("tread").textContent = wall.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// map tools
+$("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = t[0]; $("trail").textContent = t[1]; draw(); };
+$("fit").onclick = () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); };
+$("loop").onclick = () => { state.loop = !state.loop; $("loop").setAttribute("aria-pressed", String(state.loop)); };
+$("full").onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (e) {} };
+document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)), ON);
+
+// pan & zoom
+const ptrs = new Map(); let pinch0 = null;
+map.addEventListener("pointerdown", e => { map.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); map.classList.add("drag"); if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: state.view.scale }; } });
+map.addEventListener("pointermove", e => {
+  if (!ptrs.has(e.pointerId)) return;
+  const prev = ptrs.get(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+  if (ptrs.size === 2 && pinch0) { const [a, b] = [...ptrs.values()]; state.view.scale = pinch0.s * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch0.d; }
+  else if (state.follow == null) { state.view.cx -= (e.clientX - prev[0]) / state.view.scale; state.view.cy += (e.clientY - prev[1]) / state.view.scale; }
+  state.userMoved = true; draw();
+});
+const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch0 = null; if (!ptrs.size) map.classList.remove("drag"); };
+map.addEventListener("pointerup", up); map.addEventListener("pointercancel", up);
+map.addEventListener("wheel", e => {
+  e.preventDefault(); const r = map.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const wx = state.view.cx + (mx - W / 2) / state.view.scale, wy = state.view.cy - (my - H / 2) / state.view.scale;
+  state.view.scale *= Math.exp(-e.deltaY * 0.0015);
+  if (state.follow == null) { state.view.cx = wx - (mx - W / 2) / state.view.scale; state.view.cy = wy + (my - H / 2) / state.view.scale; }
+  state.userMoved = true; draw();
+}, { passive: false });
+map.addEventListener("dblclick", () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); });
+
+// keyboard
+document.addEventListener("keydown", e => {
+  if (SIG.aborted) return;
+  if (e.target.closest("select, input")) return;
+  if (e.code === "Space") { e.preventDefault(); setPlaying(!state.playing); }
+  else if (e.key === "ArrowRight") { state.i = Math.min(N - 1, state.i + 10 * HZ); refresh(); }
+  else if (e.key === "ArrowLeft") { state.i = Math.max(0, state.i - 10 * HZ); refresh(); }
+  else if (/^[1-5]$/.test(e.key)) setSpeed(SPEEDS[+e.key - 1]);
+  else if (e.key === "f") $("full").click();
+}, ON);
+
+// ---------- tabs (hash routing)
+function show(v) {
+  const deb = v === "debrief";
+  $("view-replay").hidden = deb; $("view-debrief").hidden = !deb;
+  $("tab-replay").setAttribute("aria-selected", String(!deb)); $("tab-debrief").setAttribute("aria-selected", String(deb));
+  if (deb) { setPlaying(false); renderDebrief(); } else requestAnimationFrame(resize);
+}
+$("tab-replay").onclick = () => { location.hash = hashFor("replay"); };
+$("tab-debrief").onclick = () => { location.hash = hashFor("debrief"); };
+
+// ---------- debrief
+let debriefDone = false, debriefBoat = 0;
+function jump(t) { state.i = Math.max(0, Math.min(N - 1, (t - 8) * HZ)); if (location.hash.slice(1) === hashFor("replay")) show("replay"); else location.hash = hashFor("replay"); }
+function renderDebrief() {
+  debriefDone = true;
+  const el = $("debrief");
+  const byPos = boats.slice().sort((a, c) => a.summary.position - c.summary.position);
+  const best = (key, hi = true) => { const v = boats.map(b => b.summary[key]).filter(x => x != null); return v.length ? (hi ? Math.max(...v) : Math.min(...v)) : null; };
+  const cell = (v, key, d, hi = true, suffix = "") => { const b = best(key, hi); return `<td class="${v != null && v === b && boats.length > 1 ? "best" : ""}">${v == null ? "—" : Number(v).toFixed(d) + suffix}</td>`; };
+  const dot = b => `<i style="background:${b.color}"></i>`;
+  const notes = (M.notes || []).map(n => `<p class="note">${esc(n)}</p>`).join("");
+  let h = "";
+  if (DAY && RACES.length > 1) {
+    const multi = DAY.races.some(r => r.boats > 1);
+    const fmtT = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const moved = c => { const parts = []; for (const [k, lbl] of [["windward", "W"], ["leeward", "L"]]) { const d = c[k + "_moved_m"]; if (d != null && d >= 30) parts.push(lbl + " " + d + " m"); } return parts.length ? parts.join(", ") : "—"; };
+    h += `<div><h2>${esc(DAY.title)}</h2><p class="note">${DAY.races.length} races found${DAY.races.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. Course change lists marks that moved 30 m or more since the race before. Click a race to open it.</p>
+    <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Course</th><th>Course change</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
+    const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
+    for (const r of DAY.races) {
+      const c = r.course || {};
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+    }
+    h += `</tbody></table></div></div>`;
+  }
+  h += `<div><h2>${esc(M.title)} results</h2>${notes}<p class="note">Wind ${M.twd_global ?? "—"}° (${esc(srcText)}). Speeds in knots, VMG is speed made good toward the wind upwind and away from it downwind. ${boats.length > 1 ? "Green marks the best in the fleet." : ""}${boats[0].summary.heading_offset != null && boats.length === 1 ? ` Upwind the boat tracked ${Math.abs(boats[0].summary.up_leeway ?? 0).toFixed(0)}° below its heading (leeway plus current). The Atlas reads ${Math.abs(boats[0].summary.heading_offset).toFixed(0)}° off the centreline; the replay corrects for it.` : ""}</p>
+  <div class="tbl"><table><thead><tr><th>Boat</th><th>Pos</th><th>Elapsed</th><th>Sailed</th><th>Avg speed</th><th>Upwind VMG</th><th>Upwind speed</th><th>Tack angle</th><th>Downwind VMG</th><th>Downwind speed</th><th>Tacks</th><th>Tack loss</th><th>Gybes</th><th>Gybe loss</th></tr></thead><tbody>`;
+  for (const b of byPos) { const s = b.summary;
+    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
+  h += `</tbody></table></div></div>`;
+
+  const WS = R.wind.speed || {};
+  if (WS.tws != null || R.wind.twd) {
+    const tw = (R.wind.twd || []).filter(v => v != null), avg = R.wind.twd_avg;
+    const devs = avg != null ? tw.map(v => ((v - avg + 540) % 360) - 180) : [];
+    const sl = devs.length ? Math.round(Math.min(...devs)) : null, sr = devs.length ? Math.round(Math.max(...devs)) : null;
+    const rng = (lo, mid, hi) => mid == null ? "—" : `${Math.round(lo)}–${Math.round(hi)} kt`;
+    h += `<div><h2>Wind</h2><p class="note">There is no wind sensor, so the speed is read from boat speed against a provisional Melges 15 speed table (no official polar is published). It assumes the boat is sailing at target speed: a boat sailing below its numbers reads a lighter wind, and GPS speed includes any current. Direction comes from the boats' tacks.</p>
+    <div class="tbl"><table class="wind"><thead><tr><th>Measure</th><th>Estimate</th><th>Detail</th></tr></thead><tbody>
+    <tr><td>Wind speed</td><td>${WS.tws != null ? "≈ " + Math.round(WS.tws) + " kt" : "—"}</td><td>${rng(WS.tws_lo, WS.tws, WS.tws_hi)} lulls to puffs${WS.words ? " · " + esc(WS.words) : ""}</td></tr>
+    <tr><td>Read from the beats</td><td>${WS.up != null ? "≈ " + Math.round(WS.up) + " kt" : "—"}</td><td>upwind speed flattens above 12 kt, so beats cannot read a fresh breeze</td></tr>
+    <tr><td>Read from the runs</td><td>${WS.down != null ? "≈ " + Math.round(WS.down) + " kt" : "—"}</td><td>${WS.down != null && WS.down >= 8 ? "planing" : "displacement mode"} downwind</td></tr>
+    <tr><td>Direction</td><td>${avg != null ? avg + "°" : "—"}</td><td>${sl != null ? `shifts from ${sl > 0 ? "+" : "−"}${Math.abs(sl)}° to ${sr >= 0 ? "+" : "−"}${Math.abs(sr)}° around the race average` : ""}</td></tr>
+    </tbody></table></div></div>`;
+  }
+  if (GUN != null && !R.line) {
+    h += `<div><h2>Start</h2><p class="note">${M.start_estimated ? "Start time is estimated from when the boat began the first beat, so treat these as approximate." : ""} Nobody pinged the start line, so distance to the line and line position are not available. Ping both ends on the Atlas next time to get them.</p>
+    <div class="tbl"><table><thead><tr><th>Boat</th><th>Speed at start</th><th>Speed +10 s</th>${boats.length > 1 ? "<th>Height at 2 min</th>" : ""}</tr></thead><tbody>`;
+    for (const b of byPos) { const s = b.start || {};
+      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td><td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td>${boats.length > 1 ? `<td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td>` : ""}</tr>`; }
+    h += `</tbody></table></div></div>`;
+  } else if (GUN != null) {
+    h += `<div><h2>Start</h2><p class="note">Distance is measured square to the line at the gun. Line position runs from the pin (0%) to the committee boat (100%). Height is metres to windward of the best boat two minutes after the gun.</p>
+    <div class="tbl"><table><thead><tr><th>Boat</th><th>Behind line at gun</th><th>Speed at gun</th><th>Speed +10 s</th><th>Line position</th><th>Crossed after</th><th>Height at 2 min</th></tr></thead><tbody>`;
+    for (const b of byPos) { const s = b.start || {};
+      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td><td class="${s.ocs ? "flag" : ""}">${s.dist_to_line_m == null ? "—" : s.ocs ? "Over by " + Math.abs(s.dist_to_line_m).toFixed(1) + " m" : s.dist_to_line_m.toFixed(1) + " m"}</td><td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td><td>${s.cross_pos != null ? s.cross_pos + "%" : s.pos_at_gun != null ? s.pos_at_gun + "%" : "—"}</td><td>${s.cross_s != null ? s.cross_s.toFixed(1) + " s" : "—"}</td><td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td></tr>`; }
+    h += `</tbody></table></div></div>`;
+  }
+
+  h += `<div class="charts">
+    <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+    <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward. Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+  </div>`;
+
+  h += `<div><h2>Manoeuvres and legs</h2><div class="row"><label for="manBoat">Boat</label><select id="manBoat">${boats.map((b, k) => `<option value="${k}" ${k === debriefBoat ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select><span class="note" style="color:var(--muted)">Loss is metres of VMG given up from 6 s before to 24 s after the turn, against the speed going in. Click a row to watch it.</span></div>
+    <div class="tbl" id="manTbl"></div><div style="height:14px"></div><div class="tbl" id="legTbl"></div></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll("tr.jump").forEach(tr => tr.onclick = () => jump(+tr.dataset.t));
+  el.querySelectorAll("tr.jumprace").forEach(tr => tr.onclick = () => { location.hash = "r" + tr.dataset.k; });
+  $("manBoat").onchange = e => { debriefBoat = +e.target.value; renderMan(); };
+  renderMan(); drawSpeedChart(); drawHeelChart();
+}
+function renderMan() {
+  const b = boats[debriefBoat];
+  let h = `<table><thead><tr><th>Manoeuvre</th><th>Race time</th><th>Speed in</th><th>Lowest</th><th>Drop</th><th>Back to 90%</th><th>Loss</th><th>Turned</th></tr></thead><tbody>`;
+  const tl = b.manoeuvres.filter(m => m.kind === "tack").map(m => m.loss_m).filter(x => x != null);
+  const med = tl.length ? tl.slice().sort((a, c) => a - c)[Math.floor(tl.length / 2)] : null;
+  for (const m of b.manoeuvres) {
+    const name = m.label || (m.kind === "tack" ? "Tack" : "Gybe");
+    const bad = m.kind === "tack" && med != null && m.loss_m != null && m.loss_m > med * 1.6 && m.loss_m > 5;
+    h += `<tr class="jump" data-t="${m.t}"><td>${name}</td><td>${fmtClock(m.t - (GUN ?? 0))}</td><td>${fmtNum(m.entry_sog)} kt</td><td>${m.min_sog != null ? fmtNum(m.min_sog) + " kt" : "—"}</td><td>${m.drop_pct != null ? m.drop_pct + "%" : "—"}</td><td>${m.recover_s != null ? m.recover_s.toFixed(1) + " s" : m.kind === "rounding" ? "—" : "> 40 s"}</td><td class="${bad ? "flag" : ""}">${m.loss_m != null ? m.loss_m.toFixed(1) + " m" : "—"}</td><td>${m.turn != null ? m.turn + "°" : "—"}</td></tr>`;
+  }
+  h += `</tbody></table>`;
+  $("manTbl").innerHTML = h;
+  let l = `<table><thead><tr><th>Leg</th><th>Started</th><th>Duration</th><th>Sailed</th><th>Avg speed</th><th>Avg VMG</th><th>Wind angle</th><th>Heel</th><th>Est. wind</th><th>Tacks/gybes</th></tr></thead><tbody>`;
+  b.legs.forEach((g, k) => { l += `<tr class="jump" data-t="${g.start}"><td>${k + 1}. ${g.type}</td><td>${fmtClock(g.start - (GUN ?? 0))}</td><td>${fmtClock(g.duration_s)}</td><td>${g.distance_m} m</td><td>${fmtNum(g.avg_sog, 2)} kt</td><td>${fmtNum(g.avg_vmg, 2)} kt</td><td>${g.avg_twa}°</td><td>${fmtNum(g.avg_heel)}°</td><td>${g.tws != null ? `${Math.round(g.tws)} kt <span style="color:var(--muted)">(${Math.round(g.tws_lo)}–${Math.round(g.tws_hi)})</span>` : "—"}</td><td>${g.manoeuvres}</td></tr>`; });
+  $("legTbl").innerHTML = l + `</tbody></table>`;
+  document.querySelectorAll("#manTbl tr.jump, #legTbl tr.jump").forEach(tr => tr.onclick = () => jump(+tr.dataset.t));
+}
+function chartCanvas(id) {
+  const cv = $(id), r = cv.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+  const c = cv.getContext("2d"); c.setTransform(d, 0, 0, d, 0, 0); return [cv, c, r.width, r.height];
+}
+function axes(c, w, h, x0, x1, y0, y1, xl, yl, xfmt) {
+  const L = 44, B = 26, T = 10, Rr = 10;
+  const X = v => L + (w - L - Rr) * (v - x0) / (x1 - x0), Y = v => h - B - (h - B - T) * (v - y0) / (y1 - y0);
+  c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.strokeStyle = "rgba(134,161,176,0.14)"; c.lineWidth = 1;
+  const ys = niceStep((y1 - y0) / 5);
+  for (let v = Math.ceil(y0 / ys) * ys; v <= y1 + 1e-9; v += ys) { c.beginPath(); c.moveTo(L, Y(v) + .5); c.lineTo(w - Rr, Y(v) + .5); c.stroke(); c.textAlign = "right"; c.fillText(+v.toFixed(2), L - 6, Y(v) + 4); }
+  const xs = niceStep((x1 - x0) / 7);
+  c.textAlign = "center";
+  for (let v = Math.ceil(x0 / xs) * xs; v <= x1 + 1e-9; v += xs) c.fillText(xfmt ? xfmt(v) : v, X(v), h - 8);
+  c.textAlign = "left"; c.fillText(yl, L + 4, T + 10);
+  c.textAlign = "right"; c.fillText(xl, w - Rr, h - B - 6);
+  return [X, Y, L, B, T, Rr];
+}
+let spdGeom = null;
+function drawSpeedChart() {
+  const [cv, c, w, h] = chartCanvas("spdChart");
+  const a = GUN != null ? Math.round(GUN * HZ) : 0;
+  const win = Math.round(20 * HZ);
+  let ymax = 0;
+  const series = boats.map(b => { const out = []; let sum = 0, cnt = 0; const s = b.track.sog;
+    for (let i = a; i < N; i++) { if (s[i] != null) { sum += s[i]; cnt++; } if (i - win >= a && s[i - win] != null) { sum -= s[i - win]; cnt--; } if (i % Math.max(1, Math.round(HZ * 5)) === 0 && cnt > win / 2) { out.push([raceT(i) / 60, sum / cnt]); ymax = Math.max(ymax, sum / cnt); } }
+    return out; });
+  const x1 = raceT(N - 1) / 60;
+  const [X, Y] = axes(c, w, h, raceT(a) / 60, x1, 0, Math.ceil(ymax + 0.5), "race minutes", "knots", v => v);
+  boats.forEach((b, k) => { c.strokeStyle = b.color; c.lineWidth = 1.8; c.beginPath(); series[k].forEach(([x, y], n) => n ? c.lineTo(X(x), Y(y)) : c.moveTo(X(x), Y(y))); c.stroke(); });
+  spdGeom = { X, x0: raceT(a) / 60, x1, w };
+  cv.onclick = e => { const r = cv.getBoundingClientRect(); const px = e.clientX - r.left; const L = 44, Rr = 10; const m = spdGeom.x0 + (spdGeom.x1 - spdGeom.x0) * (px - L) / (spdGeom.w - L - Rr); jump(m * 60 + (GUN ?? 0) + 8); };
+}
+function drawHeelChart() {
+  const [cv, c, w, h] = chartCanvas("heelChart");
+  const all = boats.flatMap(b => b.summary.heel_vs_vmg || []);
+  if (!all.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText("No upwind sailing found.", 50, 40); return; }
+  const x0 = Math.min(...all.map(p => p[0])) - 1, x1 = Math.max(...all.map(p => p[0])) + 1;
+  const y0 = Math.floor(Math.min(...all.map(p => p[1])) * 5) / 5 - 0.1, y1 = Math.ceil(Math.max(...all.map(p => p[1])) * 5) / 5 + 0.1;
+  const [X, Y] = axes(c, w, h, x0, x1, y0, y1, "heel to leeward (°)", "VMG kt");
+  for (const b of boats) { const pts = b.summary.heel_vs_vmg || []; c.strokeStyle = b.color; c.fillStyle = b.color; c.lineWidth = 2; c.beginPath(); pts.forEach(([x, y], n) => n ? c.lineTo(X(x), Y(y)) : c.moveTo(X(x), Y(y))); c.stroke();
+    let bi = 0; pts.forEach((p, n) => { if (p[1] > pts[bi][1]) bi = n; }); if (pts.length) { c.beginPath(); c.arc(X(pts[bi][0]), Y(pts[bi][1]), 4, 0, Math.PI * 2); c.fill(); } }
+}
+
+// ---------- boot
+const ro = new ResizeObserver(() => { if (SIG.aborted) return; if (!$("view-replay").hidden) resize(); else { sizeScrub(); drawScrub(); } });
+ro.observe($("mapwrap")); ro.observe($("scrubwrap"));
+SIG.addEventListener("abort", () => { ro.disconnect(); state.playing = false; keepAwake(false); });
+window.addEventListener("resize", () => { if ($("view-replay").hidden && debriefDone) { drawSpeedChart(); drawHeelChart(); } }, ON);
+show(VIEW);
+resize(); refresh();
+return { show };
+}
+})();
+</script>
