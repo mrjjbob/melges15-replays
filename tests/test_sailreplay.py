@@ -156,3 +156,42 @@ def test_line_is_square_to_wind(tmp_path):
     bearing = math.degrees(math.atan2(dx, dy)) % 180
     assert abs(((bearing - (r["twd"] + 90) % 180) + 90) % 180 - 90) < 1
     assert abs(r["start_ms"] - make_demo_race.GUN_MS) < 30_000
+
+
+def test_series_assignment():
+    from sailreplay.site import series_for
+    ser = [{"name": "P1", "start": "2026-11-07"}, {"name": "P2", "start": None}]
+    assert series_for("2026-11-08", ser)["name"] == "P1"
+    assert series_for("2026-03-22", ser) is None
+    ser[1]["start"] = "2027-03-01"
+    assert series_for("2027-02-28", ser)["name"] == "P1"
+    assert series_for("2027-03-07", ser)["name"] == "P2"
+
+
+def test_low_point_scoring():
+    from sailreplay.site import score_series
+    day1 = {"date": "2026-11-08", "title": "d1", "boats": ["A", "B", "C"], "race_rows": [
+        {"race": 1, "results": [{"name": "A", "pos": 2, "elapsed_s": 700}, {"name": "B", "pos": 1, "elapsed_s": 650},
+                                {"name": "C", "pos": 3, "elapsed_s": None}]}]}
+    day2 = {"date": "2026-11-15", "title": "d2", "boats": ["A", "C"], "race_rows": [
+        {"race": 1, "results": [{"name": "A", "pos": 1, "elapsed_s": 600}, {"name": "C", "pos": 2, "elapsed_s": 640}]}]}
+    s = score_series("P1", [day1, day2])
+    by = {r["boat"]: r for r in s["rows"]}
+    assert s["entries"] == 3
+    assert [x["pts"] for x in by["A"]["scores"]] == [2, 1]
+    assert by["B"]["scores"][1]["code"] == "DNC" and by["B"]["scores"][1]["pts"] == 4
+    assert by["C"]["scores"][0]["code"] == "DNF"
+    assert s["rows"][0]["boat"] == "A"
+    s2 = score_series("P1", [day1, day2], discards=1)
+    assert {r["boat"]: r["net"] for r in s2["rows"]}["B"] == 1
+
+
+def test_site_builds(tmp_path):
+    import shutil
+    import make_demo_race
+    from sailreplay import site
+    logs = tmp_path / "logs"
+    make_demo_race.simulate(logs, timers=False)
+    m = site.build_site(logs, tmp_path / "_site", site_cfg={"series": [{"name": "P1", "start": "2026-10-01"}]}, repo="a/b", log=lambda *a: None)
+    assert (tmp_path / "_site" / "results.html").exists() and (tmp_path / "_site" / "index.html").exists()
+    assert m["days"][0]["series"] == "P1" and m["days"][0]["races"] == 1

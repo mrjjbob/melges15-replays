@@ -1,0 +1,124 @@
+<title>__TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: results sheet. One standings table per series, race columns grouped by day; preliminary notice up top. Same palette as the replays. */
+:root {
+  --water: #0d1e29;
+  --water-2: #122a39;
+  --panel: #091620;
+  --panel-2: #0f2230;
+  --ink: #e4eef3;
+  --muted: #86a1b0;
+  --rule: #213c4c;
+  --accent: #f2b33d;
+  --gold: #f2c94c;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--panel); color: var(--ink); font: 16px/1.5 var(--f-body); }
+a { color: inherit; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 26px; }
+.home { font: 600 13px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-decoration: none; }
+.home:hover { color: var(--ink); }
+header { display: grid; gap: 6px; }
+.eyebrow { font: 600 13px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+h1 { margin: 0; font: 700 clamp(38px, 7vw, 60px)/0.95 var(--f-display); text-wrap: balance; }
+.notice { display: flex; gap: 14px; align-items: flex-start; border: 1px solid #6b5224; background: rgba(242,179,61,.07); border-radius: 12px; padding: 14px 16px; }
+.notice b { font: 700 14px/1.2 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); white-space: nowrap; padding-top: 2px; }
+.notice p { margin: 0; color: var(--ink); max-width: 70ch; }
+section { display: grid; gap: 10px; min-width: 0; }
+h2 { margin: 0; font: 700 28px/1.1 var(--f-display); text-wrap: balance; }
+.sub { color: var(--muted); font-size: 14.5px; }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 9px 11px; text-align: center; white-space: nowrap; border-bottom: 1px solid var(--rule); }
+thead th { font: 600 12px/1.2 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--panel-2); }
+thead tr.days th { font-size: 11.5px; color: var(--ink); border-bottom: 0; padding-bottom: 2px; }
+thead tr.days th a { text-decoration: none; }
+thead tr.days th a:hover { color: var(--accent); }
+th.l, td.l { text-align: left; }
+td { font: 400 14.5px/1.2 var(--f-data); }
+td.boat { font: 600 15px/1.2 var(--f-body); position: sticky; left: 0; background: var(--panel); z-index: 1; }
+thead th.boat { position: sticky; left: 0; z-index: 2; }
+td.rank { font: 700 20px/1 var(--f-display); color: var(--muted); width: 3ch; }
+tr.p1 td.rank { color: var(--gold); }
+td.net { font: 700 20px/1 var(--f-display); color: var(--ink); }
+td .code { display: block; font: 600 10px/1 var(--f-display); letter-spacing: .1em; color: var(--muted); margin-top: 2px; }
+td.drop { color: var(--muted); }
+td.daystart, th.daystart { border-left: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+.empty { padding: 22px 18px; border: 1px dashed var(--rule); border-radius: 12px; color: var(--muted); }
+.how { color: var(--muted); font-size: 14px; max-width: 80ch; display: grid; gap: 6px; }
+.how p { margin: 0; }
+@media (max-width: 640px) {
+  th, td { padding: 8px 8px; }
+  td { font-size: 13.5px; }
+  .notice { flex-direction: column; gap: 6px; }
+}
+</style>
+
+<div class="wrap">
+  <a class="home" href="index.html">← All days</a>
+  <header>
+    <span class="eyebrow" id="club"></span>
+    <h1>Preliminary results</h1>
+  </header>
+  <div class="notice"><b>Preliminary</b><p id="note"></p></div>
+  <div id="series"></div>
+  <div class="how">
+    <p><b>How these are scored.</b> Low point: 1st scores 1, 2nd scores 2, and so on. Places come from the order boats crossed the finish in their uploaded logs. A boat with a log that day but no finish in a race scores DNF; a boat with no upload that day scores DNC. Both score the number of boats in the series plus one. Discarded scores are in brackets.</p>
+    <p>Only boats that uploaded appear here, so places can change as more files come in, and the official results from the weekly email always take priority.</p>
+  </div>
+  <footer class="sub" id="foot"></footer>
+</div>
+
+<script type="application/json" id="results-data">__RESULTS_JSON__</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("results-data").textContent);
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+$("club").textContent = D.club || "Melges 15 fleet";
+$("note").textContent = D.note;
+const host = $("series");
+host.style.display = "grid"; host.style.gap = "34px";
+if (!D.standings.length) host.innerHTML = `<div class="empty">No series has started yet.</div>`;
+for (const s of D.standings) {
+  const sec = document.createElement("section");
+  if (!s.races.length) {
+    sec.innerHTML = `<h2>${esc(s.name)}</h2><div class="empty">No races uploaded for this series yet. Results appear here after the first racing day.</div>`;
+    host.appendChild(sec); continue;
+  }
+  // group race columns by day
+  const groups = [];
+  s.races.forEach((r, i) => { const g = groups[groups.length - 1]; if (g && g.date === r.date) g.cols.push(i); else groups.push({ date: r.date, href: r.href, cols: [i] }); });
+  const dayLbl = d => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  let h = `<h2>${esc(s.name)}</h2><div class="sub">${s.races.length} race${s.races.length === 1 ? "" : "s"} · ${s.entries} boat${s.entries === 1 ? "" : "s"} uploaded${s.discards ? ` · ${s.discards} discard${s.discards === 1 ? "" : "s"}` : ""}</div>`;
+  h += `<div class="tbl"><table><thead><tr class="days"><th></th><th class="boat"></th><th></th>`;
+  for (const g of groups) h += `<th class="daystart" colspan="${g.cols.length}">${g.href ? `<a href="${g.href}">${dayLbl(g.date)}</a>` : dayLbl(g.date)}</th>`;
+  h += `<th class="daystart"></th></tr><tr><th>Pos</th><th class="boat l">Boat</th><th>Net</th>`;
+  for (const g of groups) g.cols.forEach((i, k) => { h += `<th class="${k === 0 ? "daystart" : ""}">R${s.races[i].race}</th>`; });
+  h += `<th class="daystart">Total</th></tr></thead><tbody>`;
+  for (const r of s.rows) {
+    h += `<tr class="p${r.rank}"><td class="rank">${r.rank}</td><td class="boat l">${esc(r.boat)}</td><td class="net">${r.net}</td>`;
+    for (const g of groups) g.cols.forEach((i, k) => {
+      const x = r.scores[i];
+      const v = x.dropped ? `(${x.pts})` : x.pts;
+      h += `<td class="${k === 0 ? "daystart" : ""}${x.dropped ? " drop" : ""}">${v}${x.code ? `<span class="code">${x.code}</span>` : ""}</td>`;
+    });
+    h += `<td class="daystart">${r.total}</td></tr>`;
+  }
+  h += `</tbody></table></div>`;
+  if (s.races.some(r => r.by_made_good)) h += `<div class="sub">Some races had no finishes in the logs, so their order is by distance made good and should be checked against the official results.</div>`;
+  sec.innerHTML = h; host.appendChild(sec);
+}
+const up = new Date(D.updated);
+$("foot").innerHTML = `Updated ${up.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}${D.upload_url ? ` · <a href="${D.upload_url}">Upload your .vkx files</a>` : ""}`;
+})();
+</script>

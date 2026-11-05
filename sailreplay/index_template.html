@@ -28,6 +28,13 @@ header { display: grid; gap: 6px; margin-bottom: 32px; }
 .eyebrow { font: 600 13px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
 h1 { margin: 0; font: 700 clamp(40px, 7vw, 68px)/0.95 var(--f-display); letter-spacing: .005em; text-wrap: balance; }
 .meta { color: var(--muted); font-size: 15px; }
+.results-link { justify-self: start; margin-top: 10px; font: 700 16px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); text-decoration: none; border: 1px solid #6b5224; border-radius: 999px; padding: 9px 14px; }
+.results-link:hover { background: rgba(242,179,61,.08); }
+.group { display: grid; gap: 10px; }
+.group + .group { margin-top: 26px; }
+.group h3 { margin: 0; font: 700 24px/1.1 var(--f-display); }
+.group .gsub { color: var(--muted); font-size: 14px; margin-top: -6px; }
+.tag.label { color: var(--ink); border-color: var(--muted); }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
 h2 { margin: 0 0 12px; font: 600 15px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 
@@ -77,11 +84,11 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     <span class="eyebrow" id="club"></span>
     <h1 id="title"></h1>
     <span class="meta" id="meta"></span>
+    <a class="results-link" href="results.html">Preliminary results →</a>
   </header>
   <div class="grid">
     <section>
-      <h2>Racing days</h2>
-      <div class="days" id="days"></div>
+      <div id="days"></div>
       <details class="problems" id="problems" hidden><summary></summary><ul></ul></details>
     </section>
     <aside class="add" id="add">
@@ -116,11 +123,25 @@ $("meta").textContent = racing.length
   ? `${racing.length} racing day${racing.length === 1 ? "" : "s"} · ${racing.reduce((a, d) => a + d.races, 0)} races · ${S.boat_count} boat${S.boat_count === 1 ? "" : "s"}`
   : "No races yet";
 
-const list = $("days");
-if (!S.days.length) {
-  list.innerHTML = `<div class="empty">No logs uploaded yet. Add a <code>.vkx</code> file from Vakaros Connect and the first racing day appears here.</div>`;
+const host = $("days");
+const fmtD = x => new Date(x + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+const groups = [];
+for (const se of (S.series || []).filter(x => x.start).sort((a, b) => b.start.localeCompare(a.start))) {
+  groups.push({ name: se.name, sub: `From ${fmtD(se.start)}`, days: S.days.filter(d => d.series === se.name) });
 }
-for (const d of S.days) {
+for (const se of (S.series || []).filter(x => !x.start)) groups.push({ name: se.name, sub: "Dates to be announced", days: [], tba: true });
+const other = S.days.filter(d => !d.series);
+if (other.length || !groups.length) groups.push({ name: groups.length ? "Other days" : "Racing days", sub: groups.length ? "Practice and test sessions, not scored" : "", days: other });
+for (const g of groups) {
+  const sec = document.createElement("div"); sec.className = "group";
+  sec.innerHTML = `<h3>${esc(g.name)}</h3>${g.sub ? `<div class="gsub">${esc(g.sub)}</div>` : ""}<div class="days"></div>`;
+  host.appendChild(sec);
+  const list = sec.querySelector(".days");
+  if (!g.days.length && g.tba) list.remove();
+  else if (!g.days.length) list.innerHTML = `<div class="empty">No racing days yet. Upload a <code>.vkx</code> file after sailing and the day appears here.</div>`;
+  for (const d of g.days) renderDay(list, d);
+}
+function renderDay(list, d) {
   const dt = new Date(d.date + "T12:00:00");
   const el = document.createElement(d.href ? "a" : "div");
   el.className = "day" + (d.href ? "" : " none");
@@ -128,6 +149,7 @@ for (const d of S.days) {
   const wind = d.wind_kt ? `${d.wind_dir != null ? compass(d.wind_dir) + " " : ""}${d.wind_kt[0] === d.wind_kt[1] ? d.wind_kt[0] : d.wind_kt[0] + "–" + d.wind_kt[1]} kt` : null;
   const tags = [];
   if (d.course_changes) tags.push(`<span class="tag move">Course moved ${d.course_changes}×</span>`);
+  if (d.label) tags.push(`<span class="tag label">${esc(d.label)}</span>`);
   if (d.estimated) tags.push(`<span class="tag">Starts estimated</span>`);
   el.innerHTML = `
     <div class="date"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="dm">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span><span class="yr">${dt.getFullYear()}</span></div>

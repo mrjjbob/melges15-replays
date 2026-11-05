@@ -99,6 +99,7 @@ canvas#map.drag { cursor: grabbing; }
 /* debrief */
 .debrief { height: 100%; overflow-y: auto; background: var(--panel); }
 .debrief .inner { max-width: 1180px; margin: 0 auto; padding-block: 22px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.debrief .inner > * { min-width: 0; }
 .debrief h2 { margin: 0 0 10px; font: 600 24px/1.1 var(--f-display); letter-spacing: .02em; }
 .debrief p.note { margin: 0 0 10px; color: var(--muted); max-width: 70ch; }
 .tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; }
@@ -143,6 +144,28 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   .maptools { right: 10px; }
   .charts { grid-template-columns: 1fr; }
   .debrief { height: auto; }
+  /* header stays pinned on phones, same on Replay and Debrief */
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel); }
+  .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; padding-block: 8px;
+         display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title clock" "races tabs"; gap: 8px 10px; }
+  .title { grid-area: title; min-width: 0; }
+  .clock { grid-area: clock; margin-left: 0; align-self: center; }
+  .races { grid-area: races; min-width: 0; }
+  .tabs { grid-area: tabs; }
+  .title h1 { font-size: 22px; }
+  .title .sub { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clock .lbl { font-size: 10.5px; }
+  .races { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .races[hidden] + .tabs { grid-column: 1 / -1; justify-self: start; }
+  .races button { min-width: 38px; padding: 7px 8px; }
+  .tabs button { padding: 7px 10px; }
+  .debrief .inner { padding-block: 16px 40px; gap: 22px; }
+  .debrief h2 { font-size: 21px; }
+  th, td { padding: 8px 10px; }
+  td { font-size: 13px; }
+  th:first-child, td:first-child { position: sticky; left: 0; background: var(--panel); z-index: 1; }
+  th:first-child { background: var(--panel-2); }
+  .chartcard canvas { height: 220px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -525,8 +548,7 @@ function tick(now) {
 function refresh() {
   draw(); drawWind(); updateFleet(); drawScrub();
   const rt = raceT(state.i);
-  $("clock").textContent = fmtClock(rt);
-  $("clockLbl").textContent = GUN != null && rt < 0 ? "To start" : "Race time";
+  setClock(rt);
   const wall = new Date(M.t0_ms + state.i / HZ * 1000);
   $("tread").textContent = wall.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -570,12 +592,26 @@ document.addEventListener("keydown", e => {
   else if (e.key === "f") $("full").click();
 }, ON);
 
+// ---------- header clock: race time on the replay, the race's wind on the debrief
+function setClock(rt) {
+  if (!$("view-debrief").hidden) {
+    const ws = R.wind.speed || {};
+    $("clockLbl").textContent = R.wind.twd_avg != null ? "Wind " + R.wind.twd_avg + "°" : "Wind";
+    $("clock").textContent = ws.tws != null ? "≈" + Math.round(ws.tws) + " kt" : (R.wind.twd_avg != null ? R.wind.twd_avg + "°" : "—");
+    return;
+  }
+  $("clock").textContent = fmtClock(rt);
+  $("clockLbl").textContent = GUN != null && rt < 0 ? "To start" : "Race time";
+}
+
 // ---------- tabs (hash routing)
 function show(v) {
   const deb = v === "debrief";
+  document.querySelector(".transport").hidden = deb;
   $("view-replay").hidden = deb; $("view-debrief").hidden = !deb;
   $("tab-replay").setAttribute("aria-selected", String(!deb)); $("tab-debrief").setAttribute("aria-selected", String(deb));
-  if (deb) { setPlaying(false); renderDebrief(); } else requestAnimationFrame(resize);
+  if (deb) { setPlaying(false); renderDebrief(); window.scrollTo(0, 0); } else requestAnimationFrame(resize);
+  setClock(raceT(state.i));
 }
 $("tab-replay").onclick = () => { location.hash = hashFor("replay"); };
 $("tab-debrief").onclick = () => { location.hash = hashFor("debrief"); };
