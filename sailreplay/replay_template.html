@@ -115,6 +115,12 @@ td .pen { font: 600 10px/1 var(--f-display); letter-spacing: .1em; text-transfor
 .debrief .inner > * { min-width: 0; }
 .debrief h2 { margin: 0 0 10px; font: 600 24px/1.1 var(--f-display); letter-spacing: .02em; }
 .debrief p.note { margin: 0 0 10px; color: var(--muted); max-width: 70ch; }
+.debrief .fold { cursor: pointer; user-select: none; }
+.debrief .fold .more { display: inline-block; width: 18px; height: 18px; margin-left: 8px; vertical-align: 2px; border: 1px solid var(--rule); border-radius: 50%; position: relative; opacity: .7; }
+.debrief .fold .more::after { content: "i"; position: absolute; inset: 0; display: grid; place-items: center; font: 600 11px/1 var(--f-body); color: var(--muted); }
+.debrief .fold:hover .more, .debrief .fold[aria-expanded="true"] .more { opacity: 1; border-color: var(--accent); }
+.debrief .fold[aria-expanded="true"] .more::after { color: var(--accent); }
+.debrief .fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--rule); }
@@ -239,7 +245,7 @@ const DAY = DATA.day || null;
 const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
 let ctl = null, cur = null;
 // settings that carry from race to race (cycling rebuilds the page for each race)
-const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false, orient: "wind" };
+const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false, orient: "wind", notes: new Set() };
 function parseHash() {
   const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
@@ -844,6 +850,23 @@ function renderDebrief() {
   el.querySelectorAll("tr.jumprace").forEach(tr => tr.onclick = () => { location.hash = "r" + tr.dataset.k; });
   $("manBoat").onchange = e => { debriefBoat = +e.target.value; renderMan(); };
   renderMan(); drawSpeedChart(); drawHeelChart(); drawPhaseChart();
+  foldNotes(el);
+}
+// Explanations stay folded away under their heading; tap the heading to open one.
+// What is open is remembered while you switch races.
+function foldNotes(root) {
+  root.querySelectorAll("h2, h3").forEach((hd, i) => {
+    const notes = [...hd.parentElement.querySelectorAll(":scope > p.note")];
+    if (!notes.length) return;
+    const key = hd.textContent.replace(/\d+/g, "#").trim() || String(i);
+    const set = open => { notes.forEach(n => n.hidden = !open); hd.setAttribute("aria-expanded", String(open)); };
+    hd.classList.add("fold"); hd.tabIndex = 0; hd.setAttribute("role", "button");
+    hd.insertAdjacentHTML("beforeend", `<span class="more" aria-hidden="true"></span>`);
+    set(SESSION.notes.has(key));
+    const flip = () => { const open = hd.getAttribute("aria-expanded") !== "true"; open ? SESSION.notes.add(key) : SESSION.notes.delete(key); set(open); };
+    hd.onclick = flip;
+    hd.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } };
+  });
 }
 function paceCells(s) {
   const c = v => `<td class="${v >= 95 ? "best" : v != null && v < 75 ? "flag" : ""}">${v != null ? v + "%" : "—"}</td>`;
