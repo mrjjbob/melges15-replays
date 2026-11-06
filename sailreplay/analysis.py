@@ -516,7 +516,7 @@ def _slope(a, q, max_deg=20.0, min_spread=30.0):
     return max(-lim, min(lim, k))
 
 
-def _share_committee(races: list[dict], boats, near_m: float | None = None) -> None:
+def _share_committee(races: list[dict], boats, near_m: float = 40.0) -> None:
     """The committee boat stays anchored all day (it only swings on its anchor), and so does the
     finish mark; only the pin is moved much, to square the line. So when the estimates for
     races in a row put the committee boat within 40 m of each other, it is the same spot: average
@@ -525,10 +525,6 @@ def _share_committee(races: list[dict], boats, near_m: float | None = None) -> N
     def xy(p, ref):
         ml = 111_320 * math.cos(math.radians(ref[0]))
         return ((p[1] - ref[1]) * ml, (p[0] - ref[0]) * 111_320)
-    # With one or two boats each race's estimate is rough (tens of metres), so estimates further
-    # apart still most likely mean the same anchored committee boat.
-    if near_m is None:
-        near_m = 40.0
     est = [r for r in races if r.get("line_est") and r.get("_onset")]
     groups = []
     for r in est:
@@ -549,23 +545,20 @@ def _share_committee(races: list[dict], boats, near_m: float | None = None) -> N
         same_fin = all(math.hypot(*xy(p, fm)) <= near_m for p in fe)
         for r in g:
             r["finish"] = dict(r["_fin0"])
-            _fit_line(r, boats, fixed_rc=rc)
+            _fit_line(r, boats, fixed_rc=rc, fixed_fin=fm if same_fin else None)
             r["line_est"]["committee_races"] = len(g)
 
 
 def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
               fixed_rc=None, fixed_fin=None) -> None:
-    """Start and finish lines off one committee boat: looking up the course the start runs from
-    the pin to the committee boat on its left, the finish from the committee boat to the finish
-    mark on its right (upwind finish).
+    """Start and finish lines off one committee boat in the middle: pin ... RC is the start,
+    RC ... finish mark is the finish (upwind finish).
 
-    The lines are placed where the boats actually started and finished, so every boat crosses them:
-    - start: the moment a boat turns upwind for good (after any dips or last-second tacks),
-    - finish: where it eases off and stops gaining ground up the course.
-    The start line goes through the start points and the finish line through the finish points,
-    both meeting at the committee boat in between. With three or more boats the start line also
-    takes the tilt of where the fleet was. A pinged line (Atlas 'ping' of both ends) replaces all of
-    this, and gets better with every boat that uploads."""
+    Both lines are laid roughly square to the course (leeward to windward mark), not to the wind,
+    but with one mark boat setting the pin and the finish buoy they are rarely exact. So the start
+    line, with three or more boats spread along it at the gun, is tilted to fit where they were.
+    The start line is usually longer than the finish line (at least half as long again here).
+    Each boat's start and finish are then timed as the moment it crossed its line."""
     axis = _course_axis(race)
     T = math.radians(axis if axis is not None else race["twd"])
     race["line_basis"] = "course" if axis is not None else "wind"
@@ -599,90 +592,91 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
                 continue
             before = np.nanmean(sm[max(0, i - int(30 * hz)):i])
             after = np.nanmean(sm[i:i + int(15 * hz)])
-            dip = np.nanmin(bs.sog[i:i + int(8 * hz)])
-            # a real finish: the boat slows (eases off, or slows to turn away) AND stops making
-            # ground up the course. A tack near the line slows the boat too, but it carries on
-            # upwind afterwards; reaching off after finishing gains little.
-            gain = np.nanmax(qf[i:i + int(60 * hz)]) - qf[i]
-            if before > 2 and (after < 0.65 * before or dip < 0.55 * before) and gain < 20:
+            if before > 2 and after < 0.72 * before:
                 drop = i
                 break
         if drop is None:
             drop = lo + int(np.nanargmax(qf[lo:hi])) if hi > lo else ifin
-        go = _start_turn(q, ia, hz, drop)
-        per[name] = dict(grid=grid, x=x, y=y, q=q, a=a, ia=ia, go=go, drop=drop)
+        per[name] = dict(grid=grid, x=x, y=y, q=q, a=a, ia=ia, drop=drop)
     if not per:
         return
     V = list(per.values())
-    a_on, q_on = np.array([v["a"][v["go"]] for v in V]), np.array([v["q"][v["go"]] for v in V])
-    a_dr, q_dr = np.array([v["a"][v["drop"]] for v in V]), np.array([v["q"][v["drop"]] for v in V])
-
-    # start line through the start points (tilted to fit a spread-out fleet), finish line through
-    # the finish points; the committee boat between the rightmost start and the leftmost finish
-    k_s = _slope(a_on, q_on, min_spread=40.0)
-    # Boats that started to the right of where they finished cannot both be on the line (start
-    # left, finish right of the committee boat). Then trust the finish, where boats really are at
-    # the line, put the committee boat just left of it and time the start where they crossed.
-    consistent = bool(np.nanmax(a_on) < np.nanmin(a_dr) - 5)
-    if consistent:
-        rc = (float(np.nanmax(a_on)) + float(np.nanmin(a_dr))) / 2
-        i_s = int(np.nanargmax(a_on))
-        q_rc = float(q_on[i_s]) + k_s * (rc - float(a_on[i_s]))
+    # where everyone was at the start: boats are spread along the line at the gun
+    t_gun = int(np.median([race["_onset"][n] for n in per]))
+    at_gun = [min(len(v["grid"]) - 1, max(0, int((t_gun - v["grid"][0]) / (1000 / hz)))) for v in V]
+    a_on, q_on = [v["a"][i] for v, i in zip(V, at_gun)], [v["q"][i] for v, i in zip(V, at_gun)]
+    a_dr, q_dr = [v["a"][v["drop"]] for v in V], [v["q"][v["drop"]] for v in V]
+    if sgn > 0:
+        # Upwind finish: boats cross, carry on for a few seconds, then ease off. That drop places
+        # the line better than the start, where boats are still building speed below it.
+        q0 = float(np.nanmedian(q_dr)) - 8.0
     else:
-        rc = float(np.nanmin(a_dr)) - 5
-        q_rc = float(np.nanmedian(q_dr)) - 2.0 if sgn > 0 else float(np.nanmedian(q_dr))
-        k_s = 0.0
-    fleet = len(V) >= 3
-    if fleet:
-        # A fleet: boats turn up at different distances below the line, so place it from the
-        # finishes (each boat eases off just after crossing) and tilt it to where the fleet was
-        # at the start.
-        t_gun = int(np.median([race["_onset"][n] for n in per]))
-        at = [min(len(v["grid"]) - 1, max(0, int((t_gun - v["grid"][0]) / (1000 / hz)))) for v in V]
-        k_s = _slope([v["a"][i] for v, i in zip(V, at)], [v["q"][i] for v, i in zip(V, at)], min_spread=40.0)
-        q_rc = float(np.nanmedian(q_dr)) - 2.0 if sgn > 0 else float(np.nanmedian(np.concatenate([q_on, q_dr])))
-    if fixed_rc is not None and fleet:
-        # the committee boat's spot shared with other races, if it fits this race's starts and finishes
+        q0 = float(np.nanmedian(q_on + q_dr))
+    a_ref = float(np.nanmedian(a_dr)) if sgn > 0 else float(np.nanmedian(a_on + a_dr))
+    # The finish is short and boats ease off at different distances past it, so its tilt cannot
+    # be read reliably: keep it square to the course. The start is long and the fleet is spread
+    # along it at the gun, so with three or more boats its tilt can be.
+    k_s, k_f = _slope(a_on, q_on, min_spread=40.0), 0.0
+
+    def crossing(v, lo, hi, prefer, qline, d=1.0):
+        q = d * (v["q"] - qline(v["a"]))
+        xs = [i for i in range(max(1, lo), min(len(q) - 1, hi)) if q[i - 1] < 0 <= q[i]]
+        return min(xs, key=lambda i: abs(i - prefer)) if xs else None
+
+    def start_crossing(v, qline):
+        """The crossing that starts the race: going up through the line and staying above it
+        for the next minute (a dip back below before the gun does not count). A boat can set
+        off upwind well below the line, so look up to 2½ minutes after it did."""
+        q = v["q"] - qline(v["a"])
+        lo, hi = max(1, v["ia"] - int(60 * hz)), min(len(q) - 1, v["ia"] + int(150 * hz))
+        for i in range(lo, hi):
+            if q[i - 1] < 0 <= q[i] and np.nanmin(q[i:i + int(60 * hz)]) > -5:
+                return i
+        xs = [i for i in range(lo, hi) if q[i - 1] < 0 <= q[i]]
+        if xs:
+            return min(xs, key=lambda i: abs(i - v["ia"]))
+        # never crossed it: closest approach
+        seg = np.abs(q[lo:hi])
+        return lo + int(np.nanargmin(seg)) if np.isfinite(seg).any() else v["ia"]
+
+    # pass 1: one straight line square to the course, to find which side each line is on
+    flat = lambda a: q0 + 0 * a
+    def times(qs, qf):
+        st, fi, a_s, a_f = [], {}, [], []
+        for name, v in per.items():
+            i_s = start_crossing(v, qs)
+            i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], qf, sgn) or v["drop"]
+            st.append(int(v["grid"][i_s])); fi[name] = int(v["grid"][i_f])
+            a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
+        return st, fi, a_s, a_f
+    starts, fins, a_s, a_f = times(flat, flat)
+    right = np.mean(a_f) >= np.mean(a_s)               # finish end lies to the right of the start
+    if right:
+        rc = (max(a_s) + min(a_f)) / 2 if max(a_s) < min(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
+    else:
+        rc = (min(a_s) + max(a_f)) / 2 if min(a_s) > max(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
+    # pass 2: both lines meet at the committee boat; each tilts to fit its own boats
+    q_rc = q0 + k_f * (rc - a_ref)
+    fin_mark_a = None
+    if fixed_rc is not None:                           # the committee boat's spot, shared across races
         X, Y = (fixed_rc[1] - lon0) * mlon, (fixed_rc[0] - lat0) * 111_320
-        fa, fq = X * rx + Y * ry, X * ux + Y * uy
-        if np.nanmax(a_on) < fa < np.nanmin(a_dr) and abs(fq - q_rc) <= 25:
-            rc, q_rc = fa, fq
-    # each segment runs from the committee boat through its boats and on past them
-    j_f = int(np.nanargmin(np.abs(a_dr - rc))) if len(a_dr) else 0
-    k_f = 0.0
-    if not fleet and consistent:
-        # one or two boats: one straight line through where they started and where they finished
-        i_s, j_f = int(np.nanargmax(a_on)), int(np.nanargmin(a_dr))
-        k_s = k_f = (float(q_dr[j_f]) - float(q_on[i_s])) / (float(a_dr[j_f]) - float(a_on[i_s]))
-        q_rc = float(q_on[i_s]) + k_s * (rc - float(a_on[i_s]))
-    lim = math.tan(math.radians(45))
-    k_s, k_f = max(-lim, min(lim, k_s)), max(-lim, min(lim, k_f))
+        rc, q_rc = X * rx + Y * ry, X * ux + Y * uy
+        if fixed_fin is not None:                      # and the finish mark's: that sets the finish line
+            X, Y = (fixed_fin[1] - lon0) * mlon, (fixed_fin[0] - lat0) * 111_320
+            fa, fq = X * rx + Y * ry, X * ux + Y * uy
+            if abs(fa - rc) >= 10:
+                lim = math.tan(math.radians(25))
+                k_f = max(-lim, min(lim, (fq - q_rc) / (fa - rc)))
+                right, fin_mark_a = fa > rc, fa
     qs = lambda a: q_rc + k_s * (a - rc)
     qf = lambda a: q_rc + k_f * (a - rc)
-
-    def crossing(v, qline, prefer, lo, hi, d=1.0):
-        qq = d * (v["q"] - qline(v["a"]))
-        xs = [i for i in range(max(1, lo), min(len(qq) - 1, hi)) if qq[i - 1] < 0 <= qq[i]]
-        return min(xs, key=lambda i: abs(i - prefer)) if xs else prefer
-
-    starts, fins, a_s, a_f = [], {}, [], []
-    for name, v in per.items():
-        if len(V) == 1 and consistent:
-            i1, i2 = v["go"], v["drop"]                # the lines go through this boat's own points
-        elif len(V) == 1:
-            i1 = _stay_above_crossing(v["q"] - qs(v["a"]), v["go"], hz)
-            i2 = v["drop"]
-        elif fleet:
-            i1 = _stay_above_crossing(v["q"] - qs(v["a"]), v["go"], hz)
-            i2 = crossing(v, qf, v["drop"], v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), sgn)
-        else:
-            i1 = crossing(v, qs, v["go"], v["go"] - int(20 * hz), v["go"] + int(20 * hz))
-            i2 = crossing(v, qf, v["drop"], v["drop"] - int(30 * hz), v["drop"] + int(5 * hz), sgn)
-        starts.append(int(v["grid"][i1])); fins[name] = int(v["grid"][i2])
-        a_s.append(float(v["a"][i1])); a_f.append(float(v["a"][i2]))
-    fin_len = max(20.0, max(a_f) - rc + 15)
-    st_len = max(1.5 * fin_len, 45.0, rc - min(a_s) + 20)
-    pin, fmark = rc - st_len, rc + fin_len
+    starts, fins, a_s, a_f = times(qs, qf)
+    d = 1 if right else -1
+    fin_len = max(20.0, (max(a_f) - rc if right else rc - min(a_f)) + 15)
+    if fin_mark_a is not None:
+        fin_len = max(15.0, abs(fin_mark_a - rc))
+    st_len = max(1.5 * fin_len, 45.0, (rc - min(a_s) if right else max(a_s) - rc) + 20)
+    pin, fmark = rc - d * st_len, rc + d * fin_len
 
     def ll(a, qline):
         qq = qline(a)
@@ -699,40 +693,6 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
             m["lat"], m["lon"] = ll(float(np.mean(a_s)), qs)
         elif m["kind"] == "finish":
             m["lat"], m["lon"] = ll(float(np.mean(a_f)), qf)
-
-
-def _stay_above_crossing(d, ia, hz):
-    """Going up through a line (d = metres above it) and staying above it for the next minute."""
-    lo, hi = max(1, ia - int(60 * hz)), min(len(d) - 1, ia + int(150 * hz))
-    for i in range(lo, hi):
-        if d[i - 1] < 0 <= d[i] and np.nanmin(d[i:i + int(60 * hz)]) > -5:
-            return i
-    xs = [i for i in range(lo, hi) if d[i - 1] < 0 <= d[i]]
-    if xs:
-        return min(xs, key=lambda i: abs(i - ia))
-    seg = np.abs(d[lo:hi])
-    return lo + int(np.nanargmin(seg)) if np.isfinite(seg).any() else ia
-
-
-def _start_turn(q, ia, hz, stop):
-    """When a boat starts racing: the moment it turns upwind for good. Around the onset of the
-    first beat, the first low point in its progress up the course after which it never sails back
-    down more than 8 m (a dip or bearing off below the line) and gains at least 30 m in the next
-    minute. Tacks on the beat do not lose that much ground, so they do not count as dips."""
-    qs = _nan_movmean(q, max(1, int(3 * hz)))
-    lo, hi = max(1, ia - int(60 * hz)), min(len(qs) - int(60 * hz), ia + int(150 * hz), stop)
-    horizon = int(150 * hz)
-    for i in range(lo, hi):
-        if not np.isfinite(qs[i]) or not (qs[i] <= qs[i - 1] and qs[i] <= qs[i + 1]):
-            continue
-        ahead = qs[i:min(len(qs), i + horizon, stop)]
-        if not len(ahead) or np.nanmax(qs[i:i + int(60 * hz)]) - qs[i] < 30:
-            continue
-        back = np.fmax.accumulate(np.nan_to_num(ahead, nan=-np.inf)) - ahead
-        if np.nanmax(back) <= 8:
-            return i
-    return ia
-
 
 def course_changes(races: list[dict]) -> None:
     """Annotate each race with course length and how far each mark moved since the previous race."""
