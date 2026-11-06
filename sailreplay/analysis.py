@@ -596,6 +596,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
         sel = racing_any if racing_any.any() else np.ones(n, bool)
         twd_avg = circ_mean(twd_series[sel])
     sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0, gun_i)
+    _phase(out_boats, racing_each, twd_series, twd_avg, hz)
     if line is not None:
         line = {"pin": line["pin"], "boat": line["boat"],
                 "length_m": _r(math.dist(line["pin_xy"], line["boat_xy"]), 0)}
@@ -708,8 +709,80 @@ def _estimate_wind(series, n, hz, gun_i, line, twd_manual, logs, notes):
         dev = (w * dv[None, :]).sum(axis=1) / np.where(wsum < 1e-6, 1, wsum)
         dev = np.where(wsum < 0.05, 0.0, dev) * np.minimum(1, wsum / 0.5)
         twd = (twd_global + np.clip(dev, -25, 25)) % 360
+    twd = _refine_shifts(series, twd, twd_global, hz)
     return twd, twd_global, source
 
+
+def _refine_shifts(series, twd, twd_global, hz, smooth_s: float = 45.0):
+    """Track shifts second by second from upwind headings, the way the Atlas's own shift display works.
+    A boat sailing upwind holds a steady angle to the wind, so on starboard the wind is its course plus
+    that angle, on port its course minus it. The angle is calibrated so that boats on opposite tacks at
+    the same moment read the same wind; with one boat, from the turn through its tacks. The fleet's
+    readings are combined and smoothed. Where nobody is sailing upwind steadily, the tack-based
+    estimate is kept."""
+    n = len(twd)
+    boats = []
+    for s in series:
+        cog = circ_smooth(s.cog, max(1, int(4 * hz)))
+        rate = np.abs(wrap180(np.roll(cog, -int(5 * hz)) - np.roll(cog, int(5 * hz))))
+        rel = wrap180(twd - cog)                              # + = wind on the starboard side
+        up = (np.abs(rel) > 25) & (np.abs(rel) < 65) & (s.sog > 2.0) & (rate < 12) & np.isfinite(cog)
+        if up.sum() >= 120 * hz:
+            boats.append((s, cog, up, np.sign(rel)))
+    if not boats:
+        return twd
+    # fleet calibration: at the same moment, port course minus starboard course = 2 x tacking half-angle
+    pair = []
+    for s1, c1, u1, sd1 in boats:
+        for s2, c2, u2, sd2 in boats:
+            if s1 is s2:
+                continue
+            m = u1 & u2 & (sd1 > 0) & (sd2 < 0)
+            if m.sum() >= 5 * hz:
+                pair.extend((wrap180(c2[m] - c1[m]) / 2).tolist())
+    fleet_alpha = float(np.median(pair)) if len(pair) >= 120 * hz else None
+    reads = []
+    for s, cog, up, side in boats:
+        if fleet_alpha is not None:
+            alpha = fleet_alpha
+        else:
+            tacks = [abs(turn) for j, bis, turn in _turns_from_cog(s.cog, s.sog, hz)
+                     if abs(wrap180(bis - twd_global)) < 40 and 60 < abs(turn) < 130]
+            alpha = float(np.median(tacks)) / 2 if len(tacks) >= 2 else \
+                float(np.nanmedian(np.abs(wrap180(twd_global - cog[up]))))
+        r = np.full(n, np.nan)
+        r[up] = (cog[up] + side[up] * alpha) % 360
+        reads.append(r)
+    R = np.vstack(reads)
+    rad = np.radians(R)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        sn, cs_ = np.nanmean(np.sin(rad), axis=0), np.nanmean(np.cos(rad), axis=0)
+    have = np.isfinite(sn)
+    k = max(1, int(smooth_s * hz))
+    sn_s, cs_s = _nan_movmean(np.where(have, sn, np.nan), k), _nan_movmean(np.where(have, cs_, np.nan), k)
+    est = np.degrees(np.arctan2(sn_s, cs_s)) % 360
+    ok = np.isfinite(est)
+    if ok.sum() < 60 * hz:
+        return twd
+    # fill the gaps (downwind legs, pre-start) by blending back towards the tack-based estimate
+    idx = np.arange(n)
+    dev = wrap180(est - twd)
+    dev_f = np.interp(idx, idx[ok], dev[ok])
+    gap = np.full(n, np.inf)
+    last = -np.inf
+    for i in range(n):
+        if ok[i]:
+            last = i
+        gap[i] = i - last
+    nxt = np.inf
+    for i in range(n - 1, -1, -1):
+        if ok[i]:
+            nxt = i
+        gap[i] = min(gap[i], nxt - i)
+    weight = np.exp(-gap / (90 * hz))                         # fades out over ~1.5 minutes from a reading
+    return (twd + np.clip(dev_f * weight, -25, 25)) % 360
 
 def _segments(mask_vals, min_len):
     """Run-length encode an array of labels, merging runs shorter than min_len into neighbours."""
@@ -1027,6 +1100,59 @@ def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None):
         parts = [("Left", a < lo), ("Middle", (a >= lo) & (a <= hi)), ("Right", a > hi)]
         out[key] = [{"side": n, "pace": _r(np.nanmean(p[m]), 0), "n": int(m.sum())} for n, m in parts]
     return out
+
+
+def _phase(boats, racing_each, twd, twd_avg, hz, min_shift: float = 3.0):
+    """How often each boat was on the tack or gybe the current shift favours.
+    Upwind the lifted tack: starboard when the wind has veered (right) of the race average, port when
+    it has backed (left). Downwind the opposite: the gybe that points closer to the leeward mark.
+    Moments within min_shift degrees of the average favour neither side and are left out."""
+    if twd is None or twd_avg is None:
+        return
+    # Reference wind: halfway between the fleet's typical starboard and port headings upwind. Time-averaging
+    # leans towards whichever tack was sailed longer; the midpoint doesn't, as lifts on both tacks cancel.
+    st, pt = [], []
+    for b, racing in zip(boats, racing_each):
+        tr = b["track"]
+        twa = np.array([np.nan if v is None else v for v in tr["twa"]], float)
+        cog = np.array([np.nan if v is None else v for v in tr["cog"]], float)
+        up = racing & (np.array(tr["mode"], dtype=object) == "up") & np.isfinite(cog) & np.isfinite(twa)
+        st.extend(cog[up & (twa > 0)].tolist())
+        pt.extend(cog[up & (twa < 0)].tolist())
+    if len(st) > 60 and len(pt) > 60:
+        ms, mp = circ_mean(st), circ_mean(pt)
+        twd_avg = (ms + wrap180(mp - ms) / 2) % 360
+    for b in boats:
+        b["summary"]["shift_ref"] = _r(twd_avg, 0)
+    shift = wrap180(np.asarray(twd, float) - twd_avg)
+    big = np.abs(shift) >= min_shift
+    for b, racing in zip(boats, racing_each):
+        tr = b["track"]
+        twa = np.array([np.nan if v is None else v for v in tr["twa"]], float)
+        mode = np.array(tr["mode"], dtype=object)
+        side = np.sign(twa)                                   # +1 starboard, -1 port
+        # each moment counts by the size of the shift: being on the right tack in an 8 deg shift
+        # matters more than in a 3 deg wobble (and is less sensitive to the estimate near the threshold)
+        w = np.abs(shift)
+        for key, m, want in (("up", "up", np.sign(shift)), ("down", "down", -np.sign(shift))):
+            sel = racing & big & (mode == m) & np.isfinite(twa)
+            n = int(sel.sum())
+            right = float(w[sel & (side == want)].sum())
+            tot = float(w[sel].sum())
+            b["summary"][f"{key}_phase"] = _r(right / tot * 100, 0) if n >= 30 * hz and tot > 0 else None
+            b["summary"][f"{key}_phase_s"] = _r(n / hz, 0)
+            # per leg as well, for the legs table
+        for leg in b["legs"]:
+            m = "up" if leg["type"] == "Upwind" else "down" if leg["type"] == "Downwind" else None
+            if m is None:
+                continue
+            sl = slice(int(leg["start"] * hz), int(leg["end"] * hz))
+            want = (np.sign(shift) if m == "up" else -np.sign(shift))[sl]
+            sel = (big & np.isfinite(twa))[sl]
+            n = int(sel.sum())
+            ws = w[sl]
+            tot = float(ws[sel].sum())
+            leg["phase"] = _r(float(ws[sel & (side[sl] == want)].sum()) / tot * 100, 0) if n >= 20 * hz and tot > 0 else None
 
 
 def _tws_range(est):

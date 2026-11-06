@@ -125,6 +125,7 @@ tr.jumprace .flag { color: var(--accent); }
 .chartcard h3 { margin: 0 0 2px; font: 600 18px/1.2 var(--f-display); }
 .chartcard .note { font-size: 13px; }
 .chartcard canvas { width: 100%; height: 260px; display: block; }
+.chartcard.wide { grid-column: 1 / -1; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
@@ -193,6 +194,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
           <button class="chip" id="orient" aria-pressed="true">Wind up</button>
           <button class="chip" id="fit" aria-pressed="false">Fit fleet</button>
           <button class="chip" id="loop" aria-pressed="false">Loop</button>
+          <button class="chip" id="cycle" aria-pressed="false">Cycle races</button>
           <button class="chip" id="full" aria-pressed="false">Full screen</button>
         </div>
         <div class="windbox" id="windbox">
@@ -223,6 +225,8 @@ const RACES = DATA.races || [DATA];
 const DAY = DATA.day || null;
 const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
 let ctl = null, cur = null;
+// settings that carry from race to race (cycling rebuilds the page for each race)
+const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false };
 function parseHash() {
   const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
@@ -305,7 +309,7 @@ if (M.marks && M.marks.length) {
 
 // ---------- state
 const HAS_PACE = boats.some(b => b.track.pace);
-const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: 10, follow: null, trail: 120, loop: false, paceTrail: true,
+const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: SESSION.speed, follow: null, trail: SESSION.trail, loop: SESSION.loop, paceTrail: SESSION.paceTrail,
   view: { cx: 0, cy: 0, scale: 1 }, userMoved: false };
 const SPEEDS = [1, 5, 10, 30, 60];
 const TRAILS = [[30, "Trail 30 s"], [120, "Trail 2 min"], [600, "Trail 10 min"], [Infinity, "Trail full"]];
@@ -563,7 +567,7 @@ scrub.addEventListener("pointerup", () => scrubbing = false);
 // ---------- transport
 const speeds = $("speeds");
 SPEEDS.forEach(s => { const b = document.createElement("button"); b.textContent = s + "×"; b.setAttribute("aria-pressed", String(s === state.speed)); b.onclick = () => setSpeed(s); speeds.appendChild(b); });
-function setSpeed(s) { state.speed = s; [...speeds.children].forEach(b => b.setAttribute("aria-pressed", String(b.textContent === s + "×"))); }
+function setSpeed(s) { state.speed = SESSION.speed = s; [...speeds.children].forEach(b => b.setAttribute("aria-pressed", String(b.textContent === s + "×"))); }
 let wake = null;
 async function keepAwake(on) { try { if (on && "wakeLock" in navigator) wake = await navigator.wakeLock.request("screen"); else if (wake) { await wake.release(); wake = null; } } catch (e) {} }
 function setPlaying(p) {
@@ -578,7 +582,15 @@ function tick(now) {
   if (!state.playing || SIG.aborted) return;
   const dt = Math.min(0.25, (now - last) / 1000); last = now;
   state.i += dt * state.speed * HZ;
-  if (state.i >= N - 1) { if (state.loop) state.i = GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0; else { state.i = N - 1; refresh(); setPlaying(false); return; } }
+  if (state.i >= N - 1) {
+    if (SESSION.cycle && RACES.length > 1) {          // on to the next race, back to the first after the last
+      state.i = N - 1; refresh(); SESSION.autoplay = true;
+      setTimeout(() => { if (!SIG.aborted) location.hash = "r" + ((K + 1) % RACES.length + 1); }, 1500);
+      state.playing = false; return;
+    }
+    if (state.loop) state.i = GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0;
+    else { state.i = N - 1; refresh(); setPlaying(false); return; }
+  }
   refresh(); requestAnimationFrame(tick);
 }
 function refresh() {
@@ -590,11 +602,19 @@ function refresh() {
 }
 
 // map tools
-$("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = t[0]; $("trail").textContent = t[1]; draw(); };
+$("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = SESSION.trail = t[0]; $("trail").textContent = t[1]; draw(); };
+{ const t = TRAILS.find(t => t[0] === state.trail); if (t) $("trail").textContent = t[1]; }
 $("fit").onclick = () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); };
 $("paceBtn").hidden = !HAS_PACE;
-$("paceBtn").onclick = () => { state.paceTrail = !state.paceTrail; $("paceBtn").setAttribute("aria-pressed", String(state.paceTrail)); draw(); };
-$("loop").onclick = () => { state.loop = !state.loop; $("loop").setAttribute("aria-pressed", String(state.loop)); };
+$("paceBtn").setAttribute("aria-pressed", String(state.paceTrail));
+$("paceBtn").onclick = () => { state.paceTrail = SESSION.paceTrail = !state.paceTrail; $("paceBtn").setAttribute("aria-pressed", String(state.paceTrail)); draw(); };
+$("loop").onclick = () => { state.loop = SESSION.loop = !state.loop; $("loop").setAttribute("aria-pressed", String(state.loop));
+  if (state.loop && SESSION.cycle) { SESSION.cycle = false; $("cycle").setAttribute("aria-pressed", "false"); } };
+$("cycle").hidden = RACES.length < 2;
+$("cycle").setAttribute("aria-pressed", String(SESSION.cycle));
+$("loop").setAttribute("aria-pressed", String(state.loop));
+$("cycle").onclick = () => { SESSION.cycle = !SESSION.cycle; $("cycle").setAttribute("aria-pressed", String(SESSION.cycle));
+  if (SESSION.cycle) { state.loop = SESSION.loop = false; $("loop").setAttribute("aria-pressed", "false"); if (!state.playing) setPlaying(true); } };
 $("full").onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (e) {} };
 document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)), ON);
 
@@ -722,6 +742,7 @@ function renderDebrief() {
   h += `<div class="charts">
     <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward. Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+    <div class="chartcard wide"><h3>Sailing the shifts</h3><p class="note">Share of the time each boat was on the tack or gybe the current shift favours. Upwind that is the lifted tack: starboard when the wind has gone right of the race average (${R.wind.twd_avg ?? "—"}°), port when it has gone left. Downwind it is the gybe pointing closer to the leeward mark, the opposite one. Only time with the wind ${3}° or more off the average counts; 50% is what you'd get by chance. Shifts are estimated from the fleet's tacks${boats.length === 1 ? ", so with one boat they are rough" : ""}.</p><canvas id="phaseChart"></canvas><div class="legend"><span><i style="background:var(--ink)"></i>Upwind (lifted tack)</span><span><i style="background:var(--muted)"></i>Downwind (favoured gybe)</span><span><i style="background:var(--accent)"></i>50% = chance</span></div></div>
   </div>`;
 
   h += `<div><h2>Manoeuvres and legs</h2><div class="row"><label for="manBoat">Boat</label><select id="manBoat">${boats.map((b, k) => `<option value="${k}" ${k === debriefBoat ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select><span class="note" style="color:var(--muted)">Loss is metres of VMG given up from 6 s before to 24 s after the turn, against the speed going in. Click a row to watch it.</span></div>
@@ -730,7 +751,7 @@ function renderDebrief() {
   el.querySelectorAll("tr.jump").forEach(tr => tr.onclick = () => jump(+tr.dataset.t));
   el.querySelectorAll("tr.jumprace").forEach(tr => tr.onclick = () => { location.hash = "r" + tr.dataset.k; });
   $("manBoat").onchange = e => { debriefBoat = +e.target.value; renderMan(); };
-  renderMan(); drawSpeedChart(); drawHeelChart();
+  renderMan(); drawSpeedChart(); drawHeelChart(); drawPhaseChart();
 }
 function paceCells(s) {
   const c = v => `<td class="${v >= 95 ? "best" : v != null && v < 75 ? "flag" : ""}">${v != null ? v + "%" : "—"}</td>`;
@@ -748,8 +769,8 @@ function renderMan() {
   }
   h += `</tbody></table>`;
   $("manTbl").innerHTML = h;
-  let l = `<table><thead><tr><th>Leg</th><th>Started</th><th>Duration</th><th>Sailed</th><th>Avg speed</th><th>Avg VMG</th><th>Wind angle</th><th>Heel</th><th>Pace</th><th>Est. wind</th><th>Tacks/gybes</th></tr></thead><tbody>`;
-  b.legs.forEach((g, k) => { l += `<tr class="jump" data-t="${g.start}"><td>${k + 1}. ${g.type}</td><td>${fmtClock(g.start - (GUN ?? 0))}</td><td>${fmtClock(g.duration_s)}</td><td>${g.distance_m} m</td><td>${fmtNum(g.avg_sog, 2)} kt</td><td>${fmtNum(g.avg_vmg, 2)} kt</td><td>${g.avg_twa}°</td><td>${fmtNum(g.avg_heel)}°</td><td class="${g.pace >= 103 ? "best" : g.pace != null && g.pace <= 97 ? "flag" : ""}">${g.pace != null ? g.pace + "%" : "—"}</td><td>${g.tws != null ? `${Math.round(g.tws)} kt <span style="color:var(--muted)">(${Math.round(g.tws_lo)}–${Math.round(g.tws_hi)})</span>` : "—"}</td><td>${g.manoeuvres}</td></tr>`; });
+  let l = `<table><thead><tr><th>Leg</th><th>Started</th><th>Duration</th><th>Sailed</th><th>Avg speed</th><th>Avg VMG</th><th>Wind angle</th><th>Heel</th><th>Pace</th><th>On the shift</th><th>Est. wind</th><th>Tacks/gybes</th></tr></thead><tbody>`;
+  b.legs.forEach((g, k) => { l += `<tr class="jump" data-t="${g.start}"><td>${k + 1}. ${g.type}</td><td>${fmtClock(g.start - (GUN ?? 0))}</td><td>${fmtClock(g.duration_s)}</td><td>${g.distance_m} m</td><td>${fmtNum(g.avg_sog, 2)} kt</td><td>${fmtNum(g.avg_vmg, 2)} kt</td><td>${g.avg_twa}°</td><td>${fmtNum(g.avg_heel)}°</td><td class="${g.pace >= 103 ? "best" : g.pace != null && g.pace <= 97 ? "flag" : ""}">${g.pace != null ? g.pace + "%" : "—"}</td><td>${g.phase != null ? g.phase + "%" : "—"}</td><td>${g.tws != null ? `${Math.round(g.tws)} kt <span style="color:var(--muted)">(${Math.round(g.tws_lo)}–${Math.round(g.tws_hi)})</span>` : "—"}</td><td>${g.manoeuvres}</td></tr>`; });
   $("legTbl").innerHTML = l + `</tbody></table>`;
   document.querySelectorAll("#manTbl tr.jump, #legTbl tr.jump").forEach(tr => tr.onclick = () => jump(+tr.dataset.t));
 }
@@ -786,6 +807,30 @@ function drawSpeedChart() {
   spdGeom = { X, x0: raceT(a) / 60, x1, w };
   cv.onclick = e => { const r = cv.getBoundingClientRect(); const px = e.clientX - r.left; const L = 44, Rr = 10; const m = spdGeom.x0 + (spdGeom.x1 - spdGeom.x0) * (px - L) / (spdGeom.w - L - Rr); jump(m * 60 + (GUN ?? 0) + 8); };
 }
+function drawPhaseChart() {
+  const cv = $("phaseChart"); if (!cv) return;
+  const rows = boats.slice().sort((a, c) => a.summary.position - c.summary.position);
+  cv.style.height = Math.max(120, 46 + rows.length * 46) + "px";
+  const [, c, w, h] = chartCanvas("phaseChart");
+  const L = Math.min(170, Math.max(110, w * 0.22)), Rr = 54, T = 12, B = 26;
+  const X = v => L + (w - L - Rr) * v / 100;
+  const rowH = (h - T - B) / rows.length, bh = Math.min(14, rowH * 0.32);
+  c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.strokeStyle = "rgba(134,161,176,0.14)"; c.lineWidth = 1; c.textAlign = "center";
+  for (const v of [0, 25, 50, 75, 100]) { c.beginPath(); c.moveTo(X(v) + .5, T); c.lineTo(X(v) + .5, h - B); c.stroke(); c.fillText(v + "%", X(v), h - 8); }
+  c.strokeStyle = C.accent; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(50) + .5, T); c.lineTo(X(50) + .5, h - B); c.stroke(); c.setLineDash([]);
+  rows.forEach((b, k) => {
+    const y0 = T + k * rowH + rowH / 2;
+    c.textAlign = "right"; c.font = "600 14px " + cssv("--f-body"); c.fillStyle = C.ink; c.fillText(b.name, L - 12, y0 + 5);
+    const bars = [[b.summary.up_phase, b.summary.up_phase_s, -1, 1], [b.summary.down_phase, b.summary.down_phase_s, 1, 0.45]];
+    for (const [v, secs, dir, alpha] of bars) {
+      const yy = y0 + dir * (bh / 2 + 1) - bh / 2;
+      c.font = "500 12px " + cssv("--f-data"); c.textAlign = "left";
+      if (v == null) { c.fillStyle = C.muted; c.fillText(secs ? "too little shifted wind" : "no shifts", X(0) + 6, yy + bh - 2); continue; }
+      c.globalAlpha = alpha; c.fillStyle = b.color; c.fillRect(X(0), yy, Math.max(2, X(v) - X(0)), bh); c.globalAlpha = 1;
+      c.fillStyle = C.ink; c.fillText(v + "%", X(v) + 6, yy + bh - 2);
+    }
+  });
+}
 function drawHeelChart() {
   const [cv, c, w, h] = chartCanvas("heelChart");
   const all = boats.flatMap(b => b.summary.heel_vs_vmg || []);
@@ -801,9 +846,10 @@ function drawHeelChart() {
 const ro = new ResizeObserver(() => { if (SIG.aborted) return; if (!$("view-replay").hidden) resize(); else { sizeScrub(); drawScrub(); } });
 ro.observe($("mapwrap")); ro.observe($("scrubwrap"));
 SIG.addEventListener("abort", () => { ro.disconnect(); state.playing = false; keepAwake(false); });
-window.addEventListener("resize", () => { if ($("view-replay").hidden && debriefDone) { drawSpeedChart(); drawHeelChart(); } }, ON);
+window.addEventListener("resize", () => { if ($("view-replay").hidden && debriefDone) { drawSpeedChart(); drawHeelChart(); drawPhaseChart(); } }, ON);
 show(VIEW);
 resize(); refresh();
+if (SESSION.cycle && SESSION.autoplay && VIEW !== "debrief") setTimeout(() => { if (!SIG.aborted) setPlaying(true); }, 600);
 return { show };
 }
 })();
