@@ -107,11 +107,16 @@ def find_guns(logs: list[VkxLog]) -> list[int]:
     """Gun times (ms) from race timer events across all boats, clustered within 30 s."""
     cands = []
     for log in logs:
-        for e in log.timer:
+        ev = sorted(log.timer, key=lambda e: e["t"])
+        for k, e in enumerate(ev):
             if e["event"] == "race_start":
                 cands.append(e["t"])
             elif e["event"] in ("start", "sync") and e["value_s"] > 0:
-                cands.append(e["t"] + e["value_s"] * 1000)
+                gun = e["t"] + e["value_s"] * 1000
+                # a later sync, restart or the gun itself before this countdown ran out replaces it
+                if any(f["event"] in ("start", "sync", "race_start") and e["t"] < f["t"] <= gun for f in ev[k + 1:]):
+                    continue
+                cands.append(gun)
     cands.sort()
     guns: list[list[int]] = []
     for c in cands:
@@ -821,7 +826,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
                           if m.get("gate") else {})} for m in (race or {}).get("marks", [])],
             "gate": bool((race or {}).get("gate")),
             "line_est": (race or {}).get("line_est") if line is None else None,
-            "tide": local.tide_summary(int(gun_ms if gun_ms is not None else t0), int(t0 + n * 1000 / hz)),
+            "tide": (local.tide_summary(int(gun_ms if gun_ms is not None else t0), int(t0 + n * 1000 / hz))
+                     if local.near_station(lat0, lon0) else None),
             "coast": local.coastline_near(lat0, lon0),
         },
         "line": line,
@@ -1023,7 +1029,7 @@ def _segments(mask_vals, min_len):
     return runs
 
 
-def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy) -> list:
+def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy, over=None) -> list:
     """Things that look like penalties, for showing a boat in red while it sorts them out.
     These are guesses from GPS: the line and marks are estimates and many penalties are taken
     without a log being able to tell, so each episode is kept short.
@@ -1051,6 +1057,15 @@ def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy) -> list:
             if best - p[i] >= 20 and np.sum(vmg[i_best:i + 1] < -0.8) >= 12 * hz:
                 lo = i_best
                 j_low = i + int(np.nanargmin(p[i:min(end, i + int(120 * hz))]))
+                # it has to have been over and come back: with a pinged line, over it before turning
+                # back and behind it after; without one, at least some way up from where it was at the gun
+                if over is not None:
+                    was_over = np.nanmax(over[gun_i:i + 1]) > 0.5
+                    came_back = np.nanmin(over[i:min(end, j_low + int(10 * hz)) + 1]) < 0
+                    if not (was_over and came_back):
+                        break
+                elif not (np.isfinite(p[gun_i]) and best - p[gun_i] >= 5):
+                    break
                 k_end = None
                 for k in range(j_low, min(end, lo + int(150 * hz))):
                     seg = vmg[k:k + int(10 * hz)]
@@ -1257,6 +1272,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
 
     # ---- start ------------------------------------------------------------------------
     start = None
+    over = None                                        # metres over the pinged line (+ = course side)
     if gun_i is not None and gun_i < n and s.valid[gun_i]:
         start = {"sog_at_gun": _r(sog[gun_i]), "sog_10s": _r(sog[min(n - 1, gun_i + int(10 * hz))])}
         if line:
@@ -1273,6 +1289,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
                 if not np.isnan(s.x[j]) and ((s.x[j] - px) * nx + (s.y[j] - py) * ny) < 0:
                     nx, ny = -nx, -ny
             d = (s.x - px) * nx + (s.y - py) * ny
+            over = d
             along = ((s.x - px) * lx + (s.y - py) * ly) / (L * L)
             dg = d[gun_i]
             start["dist_to_line_m"] = _r(-dg, 1)                         # + = behind the line
@@ -1330,7 +1347,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
             "mg": _r(mg, 0), "mode": [m if m else "" for m in mode.tolist()],
         },
         "manoeuvres": man, "legs": legs, "start": start, "summary": summary,
-        "penalties": _penalties(s, hz, gun_i, finish_i, vmg if have_wind else None, prog if have_wind else None, marks_xy or []),
+        "penalties": _penalties(s, hz, gun_i, finish_i, vmg if have_wind else None, prog if have_wind else None, marks_xy or [], over),
         "_tws": tws_est, "_racing": racing,
     })
     return res

@@ -437,3 +437,17 @@ def test_committee_boat_shared_between_races(monkeypatch):
     assert set(got) == {1, 2, 3, 5, 6}                     # race 4 stands alone, so is not refitted
     assert abs(got[1][0] - (40.9 + 10 * d)) < 1e-9 and got[1] == got[2] == got[3]
     assert got[5] == got[6] != got[1]
+
+
+def test_real_atlas_log_from_denmark():
+    """A real log from someone else's boat: resynced countdown, pinged line, far from Northport."""
+    p = Path(__file__).parent / "data" / "atlas2_denmark_20250917.vkx"
+    log = vkx.parse_file(p)
+    assert len(log.line) == 2
+    assert analysis.find_guns([log]) == [1758125101459]          # the sync replaces the first countdown
+    d = analysis.build_day([("dk", log)])
+    assert len(d["races"]) == 1
+    r = d["races"][0]
+    assert r["meta"]["tide"] is None and r["meta"]["coast"] is None
+    assert r["boats"][0]["penalties"] == []                      # behind the line at the gun, not OCS
+    assert any(m["kind"] == "rounding" for m in r["boats"][0]["manoeuvres"])

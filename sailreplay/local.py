@@ -75,6 +75,15 @@ def tide_events(t0_ms: int, t1_ms: int, log=None) -> list:
     return [{"t_ms": t, "type": typ, "ft": v} for t, typ, v in (w or [])]
 
 
+STATION_LATLON = (40.9, -73.3533)
+
+
+def near_station(lat: float, lon: float, km: float = 15.0) -> bool:
+    """The Northport predictions only describe Northport Harbor and Bay."""
+    mlon = 111.32 * math.cos(math.radians(lat))
+    return math.hypot((lon - STATION_LATLON[1]) * mlon, (lat - STATION_LATLON[0]) * 111.32) <= km
+
+
 def tide_summary(t0_ms: int, t1_ms: int, log=None) -> dict | None:
     """Tide during a race, for the race model: the bracketing events and the state at mid-race."""
     ev = tide_events(t0_ms, t1_ms, log)
