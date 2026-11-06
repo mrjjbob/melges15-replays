@@ -145,7 +145,7 @@ def test_polar_inverts():
     assert np.isnan(polar.wind_from_speed(np.array([6.0]), np.array([90]))[0])   # reaching is not read
 
 
-def test_line_is_square_to_wind(tmp_path):
+def test_line_is_square_to_course(tmp_path):
     import make_demo_race
     make_demo_race.simulate(tmp_path, timers=False)
     boats = [(p.stem, vkx.parse_file(p)) for p in sorted(tmp_path.glob("*.vkx"))]
@@ -155,7 +155,10 @@ def test_line_is_square_to_wind(tmp_path):
     dx = (le["finish_end"][1] - le["pin_end"][1]) * mlon
     dy = (le["finish_end"][0] - le["pin_end"][0]) * 111_320
     bearing = math.degrees(math.atan2(dx, dy)) % 180
-    assert abs(((bearing - (r["twd"] + 90) % 180) + 90) % 180 - 90) < 1
+    # the simulated course runs straight up the starting wind; the line is square to the course
+    assert abs(((bearing - (make_demo_race.TWD0 + 90) % 180) + 90) % 180 - 90) < 4
+    assert le["basis"] == "course"
+    assert le["start_len_m"] >= 1.5 * le["finish_len_m"] - 1
     assert abs(r["start_ms"] - make_demo_race.GUN_MS) < 30_000
 
 

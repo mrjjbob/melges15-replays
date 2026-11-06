@@ -402,14 +402,47 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
 
 
 
+def _course_axis(race: dict) -> float | None:
+    """Bearing from the leeward mark (or the start) to the windward mark."""
+    w = next((m for m in race["marks"] if m["kind"] == "windward"), None)
+    b = next((m for m in race["marks"] if m["kind"] == "leeward"), None) or \
+        next((m for m in race["marks"] if m["kind"] == "start"), None)
+    if not w or not b:
+        return None
+    mlon = 111_320 * math.cos(math.radians(w["lat"]))
+    dx, dy = (w["lon"] - b["lon"]) * mlon, (w["lat"] - b["lat"]) * 111_320
+    if math.hypot(dx, dy) < 150:
+        return None
+    return math.degrees(math.atan2(dx, dy)) % 360
+
+
+def _slope(a, q, max_deg=20.0, min_spread=30.0):
+    """Tilt of a line through points (a along the line, q up the course), as dq/da.
+    Zero unless there are three or more points spread out enough to say."""
+    a, q = np.asarray(a, float), np.asarray(q, float)
+    ok = np.isfinite(a) & np.isfinite(q)
+    a, q = a[ok], q[ok]
+    if len(a) < 3 or np.ptp(a) < min_spread:
+        return 0.0
+    k = float(np.polyfit(a, q, 1)[0])
+    lim = math.tan(math.radians(max_deg))
+    return max(-lim, min(lim, k))
+
+
 def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> None:
-    """Start and finish share one line square to the wind, with the committee boat in the middle:
-    pin ... RC is the start, RC ... finish mark is the finish (upwind finish).
-    Place that line where the fleet started and finished, then time each boat's start and
-    finish as the moment it crossed it. The finish is confirmed by the drop in speed after it."""
-    T = math.radians(race["twd"])
-    ux, uy = math.sin(T), math.cos(T)                  # upwind
-    rx, ry = math.cos(T), -math.sin(T)                 # to the right, looking upwind
+    """Start and finish lines off one committee boat in the middle: pin ... RC is the start,
+    RC ... finish mark is the finish (upwind finish).
+
+    Both lines are laid roughly square to the course (leeward to windward mark), not to the wind,
+    but with one mark boat setting the pin and the finish buoy they are rarely exact. So the start
+    line, with three or more boats spread along it at the gun, is tilted to fit where they were.
+    The start line is usually longer than the finish line (at least half as long again here).
+    Each boat's start and finish are then timed as the moment it crossed its line."""
+    axis = _course_axis(race)
+    T = math.radians(axis if axis is not None else race["twd"])
+    race["line_basis"] = "course" if axis is not None else "wind"
+    ux, uy = math.sin(T), math.cos(T)                  # up the course
+    rx, ry = math.cos(T), -math.sin(T)                 # to the right, looking up the course
     lat0 = next(m["lat"] for m in race["marks"])
     lon0 = next(m["lon"] for m in race["marks"])
     mlon = 111_320 * math.cos(math.radians(lat0))
@@ -424,6 +457,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
         _resample(bs, grid, 0.0)
         x, y = (bs.lon - lon0) * mlon, (bs.lat - lat0) * 111_320
         q = x * ux + y * uy
+        a = x * rx + y * ry
         ia = int(120 * hz)
         ifin = int((f_ms - grid[0]) / (1000 / hz))
         # finish: on the last leg, near its furthest point, the first clear drop in speed
@@ -442,51 +476,73 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
                 break
         if drop is None:
             drop = lo + int(np.nanargmax(qf[lo:hi])) if hi > lo else ifin
-        per[name] = dict(grid=grid, x=x, y=y, q=q, ia=ia, drop=drop)
+        per[name] = dict(grid=grid, x=x, y=y, q=q, a=a, ia=ia, drop=drop)
     if not per:
         return
+    V = list(per.values())
+    # where everyone was at the start: boats are spread along the line at the gun
+    t_gun = int(np.median([race["_onset"][n] for n in per]))
+    at_gun = [min(len(v["grid"]) - 1, max(0, int((t_gun - v["grid"][0]) / (1000 / hz)))) for v in V]
+    a_on, q_on = [v["a"][i] for v, i in zip(V, at_gun)], [v["q"][i] for v, i in zip(V, at_gun)]
+    a_dr, q_dr = [v["a"][v["drop"]] for v in V], [v["q"][v["drop"]] for v in V]
     if sgn > 0:
         # Upwind finish: boats cross, carry on for a few seconds, then ease off. That drop places
         # the line better than the start, where boats are still building speed below it.
-        qline = float(np.nanmedian([v["q"][v["drop"]] for v in per.values()])) - 8.0
+        q0 = float(np.nanmedian(q_dr)) - 8.0
     else:
-        qline = float(np.nanmedian([v["q"][v["ia"]] for v in per.values()] + [v["q"][v["drop"]] for v in per.values()]))
+        q0 = float(np.nanmedian(q_on + q_dr))
+    a_ref = float(np.nanmedian(a_dr)) if sgn > 0 else float(np.nanmedian(a_on + a_dr))
+    # The finish is short and boats ease off at different distances past it, so its tilt cannot
+    # be read reliably: keep it square to the course. The start is long and the fleet is spread
+    # along it at the gun, so with three or more boats its tilt can be.
+    k_s, k_f = _slope(a_on, q_on, min_spread=40.0), 0.0
 
-    def crossing(v, a, b, prefer, d=1.0):
-        q = d * v["q"]
-        ql = d * qline
-        xs = [i for i in range(max(1, a), min(len(q) - 1, b)) if q[i - 1] < ql <= q[i]]
-        if not xs:
-            return None
-        return min(xs, key=lambda i: abs(i - prefer))
+    def crossing(v, lo, hi, prefer, qline, d=1.0):
+        q = d * (v["q"] - qline(v["a"]))
+        xs = [i for i in range(max(1, lo), min(len(q) - 1, hi)) if q[i - 1] < 0 <= q[i]]
+        return min(xs, key=lambda i: abs(i - prefer)) if xs else None
 
-    starts, fins, a_s, a_f = [], {}, [], []
-    for name, v in per.items():
-        i_s = crossing(v, v["ia"] - int(60 * hz), v["ia"] + int(45 * hz), v["ia"]) or v["ia"]
-        i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], sgn) or v["drop"]
-        starts.append(int(v["grid"][i_s]))
-        fins[name] = int(v["grid"][i_f])
-        a_s.append(float(v["x"][i_s] * rx + v["y"][i_s] * ry))
-        a_f.append(float(v["x"][i_f] * rx + v["y"][i_f] * ry))
-    if np.mean(a_f) >= np.mean(a_s):
+    # pass 1: one straight line square to the course, to find which side each line is on
+    flat = lambda a: q0 + 0 * a
+    def times(qs, qf):
+        st, fi, a_s, a_f = [], {}, [], []
+        for name, v in per.items():
+            i_s = crossing(v, v["ia"] - int(60 * hz), v["ia"] + int(45 * hz), v["ia"], qs) or v["ia"]
+            i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], qf, sgn) or v["drop"]
+            st.append(int(v["grid"][i_s])); fi[name] = int(v["grid"][i_f])
+            a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
+        return st, fi, a_s, a_f
+    starts, fins, a_s, a_f = times(flat, flat)
+    right = np.mean(a_f) >= np.mean(a_s)               # finish end lies to the right of the start
+    if right:
         rc = (max(a_s) + min(a_f)) / 2 if max(a_s) < min(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
-        pin, fmark = min(a_s) - 20, max(a_f) + 20
     else:
         rc = (min(a_s) + max(a_f)) / 2 if min(a_s) > max(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
-        pin, fmark = max(a_s) + 20, min(a_f) - 20
+    # pass 2: both lines meet at the committee boat; each tilts to fit its own boats
+    q_rc = q0 + k_f * (rc - a_ref)
+    qs = lambda a: q_rc + k_s * (a - rc)
+    qf = lambda a: q_rc + k_f * (a - rc)
+    starts, fins, a_s, a_f = times(qs, qf)
+    d = 1 if right else -1
+    fin_len = max(20.0, (max(a_f) - rc if right else rc - min(a_f)) + 15)
+    st_len = max(1.5 * fin_len, 45.0, (rc - min(a_s) if right else max(a_s) - rc) + 20)
+    pin, fmark = rc - d * st_len, rc + d * fin_len
 
-    def ll(a):
-        X, Y = qline * ux + a * rx, qline * uy + a * ry
+    def ll(a, qline):
+        qq = qline(a)
+        X, Y = qq * ux + a * rx, qq * uy + a * ry
         return [lat0 + Y / 111_320, lon0 + X / mlon]
     race["start_ms"] = int(np.median(starts))
     race["finish"] = fins
-    race["line_est"] = {"pin_end": ll(pin), "rc": ll(rc), "finish_end": ll(fmark),
-                        "start_len_m": round(abs(rc - pin)), "finish_len_m": round(abs(fmark - rc))}
+    race["line_est"] = {"pin_end": ll(pin, qs), "rc": ll(rc, qs), "finish_end": ll(fmark, qf),
+                        "start_len_m": round(st_len), "finish_len_m": round(fin_len),
+                        "basis": race["line_basis"],
+                        "start_tilt": round(math.degrees(math.atan(k_s))), "finish_tilt": round(math.degrees(math.atan(k_f)))}
     for m in race["marks"]:
         if m["kind"] == "start":
-            m["lat"], m["lon"] = ll(float(np.mean(a_s)))
+            m["lat"], m["lon"] = ll(float(np.mean(a_s)), qs)
         elif m["kind"] == "finish":
-            m["lat"], m["lon"] = ll(float(np.mean(a_f)))
+            m["lat"], m["lon"] = ll(float(np.mean(a_f)), qf)
 
 def course_changes(races: list[dict]) -> None:
     """Annotate each race with course length and how far each mark moved since the previous race."""
@@ -537,7 +593,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
         finishes = dict(race.get("finish") or {})
         if race.get("estimated"):
             notes.append("No race timer was used, so starts and finishes are timed where boats crossed an estimated "
-                         "line, square to the wind with the committee boat between the start and finish ends.")
+                         "line, roughly square to the course with the committee boat between the start and finish ends.")
         guns = [gun_ms]
     if gun_ms is None and guns:
         if race_index >= len(guns):
