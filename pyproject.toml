@@ -20,4 +20,4 @@ sailreplay = "sailreplay.cli:main"
 packages = ["sailreplay"]
 
 [tool.setuptools.package-data]
-sailreplay = ["replay_template.html", "index_template.html"]
+sailreplay = ["replay_template.html", "index_template.html", "results_template.html", "tides_8515586.json", "coast_northport.json"]

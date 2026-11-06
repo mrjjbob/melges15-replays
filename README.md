@@ -43,6 +43,10 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
+### Tide and shoreline
+
+Each race shows which way the tide is running (flood = coming in, ebb = going out), how strong it is and the next high or low, from NOAA predictions for Northport, Northport Bay (station 8515586). Predictions for March 2026 and September 2026 to May 2027 are stored in `sailreplay/tides_8515586.json`, so nothing needs to be online. For any other date the build fetches them from NOAA automatically. The faint shoreline on the map is OpenStreetMap coastline, stored in `sailreplay/coast_northport.json`. Boats turn grey once they finish.
+
 ## Run it locally
 
 ```

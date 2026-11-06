@@ -164,6 +164,16 @@ def merge_logs(logs: list[vkx.VkxLog], source: str) -> vkx.VkxLog:
     return out
 
 
+def _tide_words(rows) -> str:
+    """' · flood' / ' · ebb' / ' · flood then ebb' for a day's races."""
+    st = []
+    for r in rows:
+        t = (r.get("tide") or {}).get("state")
+        if t and (not st or st[-1] != t):
+            st.append(t)
+    return (" · " + " then ".join(st)) if st else ""
+
+
 def _compass(d: float) -> str:
     pts = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
     return pts[round((d % 360) / 22.5) % 16]
@@ -241,7 +251,9 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
             "winners": [r["winner"] for r in rs] if len(boats) > 1 else None,
             "race_rows": [{"race": r["race"], "results": r["results"]} for r in rs],
             "weather": (f"≈{round(min(tws))}–{round(max(tws))} kt " if tws and round(min(tws)) != round(max(tws)) else
-                        f"≈{round(tws[0])} kt " if tws else "") + (_compass(analysis.circ_mean(twd)) if twd else ""),
+                        f"≈{round(tws[0])} kt " if tws else "") + (_compass(analysis.circ_mean(twd)) if twd else "")
+                       + _tide_words(rs),
+            "tide": _tide_words(rs).lstrip(" ·") or None,
         })
         days.append(entry)
         log(f"{day}: {len(boats)} boat(s), {len(rs)} race(s)")

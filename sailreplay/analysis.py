@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import polar
+from . import local, polar
 from .vkx import VkxLog
 
 KT_TO_MS = 0.514444
@@ -617,6 +617,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
             "course_letter": (race or {}).get("course_letter", ""),
             "marks": [{"kind": m["kind"], "lat": _r(m["lat"], 6), "lon": _r(m["lon"], 6)} for m in (race or {}).get("marks", [])],
             "line_est": (race or {}).get("line_est") if line is None else None,
+            "tide": local.tide_summary(int(gun_ms if gun_ms is not None else t0), int(t0 + n * 1000 / hz)),
+            "coast": local.coastline_near(lat0, lon0),
         },
         "line": line,
         "wind": {"every": wind_every, "twd": _r(twd_series[::wind_every], 0) if twd_series is not None else None,
@@ -1299,6 +1301,8 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
             "tack_loss_m": s["tack_loss_m"],
             "tws": rr["wind"]["speed"].get("tws"), "tws_lo": rr["wind"]["speed"].get("tws_lo"),
             "tws_hi": rr["wind"]["speed"].get("tws_hi"),
+            "tide": ({"state": rr["meta"]["tide"]["state"], "strength": rr["meta"]["tide"]["strength"]}
+                     if rr["meta"].get("tide") else None),
             "results": [{"name": b["name"], "pos": b["summary"]["position"], "elapsed_s": b["summary"]["elapsed_s"],
                          "sailed": b["summary"]["elapsed_s"] is not None or (b["summary"]["distance_m"] or 0) >= 300}
                         for b in bs],

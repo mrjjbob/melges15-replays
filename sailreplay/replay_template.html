@@ -61,6 +61,8 @@ canvas#map.drag { cursor: grabbing; }
 .windbox .k { font: 600 11px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .windbox .v { font: 700 26px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--accent); }
 .windbox .src { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; max-width: 30ch; line-height: 1.35; }
+.windbox .tide { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 7px; margin-top: 2px; font-size: 12.5px; line-height: 1.35; color: var(--muted); max-width: 30ch; }
+.windbox .tide b { font: 700 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); margin-right: 4px; }
 .windbox .src b { color: var(--ink); font-weight: 600; }
 .maptools { position: absolute; left: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { background: rgba(9,22,32,.82); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 11px; font: 600 13px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
@@ -143,6 +145,9 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   .clock .val { font-size: 30px; }
   .windbox { top: auto; bottom: 46px; right: 10px; padding: 8px 10px; }
   .windbox .src { display: none; }
+  .windbox .tide { padding-top: 5px; font-size: 11.5px; }
+  .windbox .tide .nx { display: none; }
+  .windbox .tide b { font-size: 13px; }
   .windbox .v { font-size: 22px; }
   .maptools { right: 10px; }
   .charts { grid-template-columns: 1fr; }
@@ -202,6 +207,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
           <div class="col"><span class="k">Wind from</span><span class="v" id="twd">—</span></div>
           <div class="col"><span class="k">Shift</span><span class="sh" id="shift">—</span><span class="shc" id="shiftc"></span></div>
           <span class="src" id="twdSrc"></span>
+          <span class="tide" id="tide" hidden></span>
         </div>
       </div>
       <aside class="fleet" id="fleet"><div class="hd"><span>Fleet</span><span id="rankBy">Made good</span></div></aside>
@@ -278,6 +284,8 @@ const toXY = (lat, lon) => [(lon - lon0) * mlon, (lat - lat0) * mlat];
 const line = R.line ? { pin: toXY(...R.line.pin), boat: toXY(...R.line.boat) } : null;
 const LE = M.line_est;
 const lineEst = LE ? { pin: toXY(...LE.pin_end), rc: toXY(...LE.rc), fin: toXY(...LE.finish_end) } : null;
+// faint coastline (OpenStreetMap), in the same metres as the tracks
+const COAST = M.coast ? M.coast.lines.map(l => l.map(([la, lo]) => toXY(la, lo))) : [];
 // Map orientation: "wind up" turns the chart so the course runs up the screen, into the wind.
 const WIND_UP = M.twd_global != null ? (R.wind.twd_avg ?? M.twd_global) : 0;
 let ROT = 0, RC_ = 1, RS_ = 0;
@@ -366,6 +374,13 @@ function draw() {
   for (let x = gx0; x < state.view.cx + W / 2 / sc; x += step) { ctx.moveTo(sx(x) + .5, 0); ctx.lineTo(sx(x) + .5, H); }
   for (let y = gy0; y < state.view.cy + H / 2 / sc; y += step) { ctx.moveTo(0, sy(y) + .5); ctx.lineTo(W, sy(y) + .5); }
   ctx.stroke();
+  // land: a very faint outline of the shore
+  if (COAST.length) {
+    ctx.strokeStyle = "rgba(196,214,224,0.20)"; ctx.lineWidth = 1.2; ctx.lineJoin = "round"; ctx.beginPath();
+    for (const l of COAST) l.forEach((p, j) => { const q = rot(p), X = sx(q[0]), Y = sy(q[1]); if (j) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+    ctx.stroke();
+    ctx.font = "500 10px " + cssv("--f-body"); ctx.fillStyle = "rgba(134,161,176,0.55)"; ctx.textAlign = "right"; ctx.fillText(M.coast.credit, W - 10, H - 8); ctx.textAlign = "left";
+  }
   // scale bar + north
   ctx.fillStyle = C.muted; ctx.strokeStyle = C.muted; ctx.lineWidth = 2;
   const bar = step * sc; ctx.beginPath(); ctx.moveTo(18, H - 22); ctx.lineTo(18 + bar, H - 22); ctx.moveTo(18, H - 27); ctx.lineTo(18, H - 17); ctx.moveTo(18 + bar, H - 27); ctx.lineTo(18 + bar, H - 17); ctx.stroke();
@@ -393,21 +408,23 @@ function draw() {
   }
   for (const m of marks) buoy(rot([m.x, m.y]), m.label, /mark/i.test(m.label) ? "#ff9f40" : "#e4eef3", !/mark/i.test(m.label));
 
-  // full tracks faint
+  // full tracks faint; a boat that has finished turns grey
   const ii = Math.floor(state.i);
+  const done = b => b.summary.finish_s != null && state.i / HZ >= b.summary.finish_s;
+  const col = b => done(b) ? FIN_GREY : b.color;
   for (const b of boats) {
-    ctx.strokeStyle = b.color; ctx.globalAlpha = 0.16; ctx.lineWidth = 1.5; polyline(b, 0, N - 1); ctx.globalAlpha = 1;
+    ctx.strokeStyle = col(b); ctx.globalAlpha = 0.16; ctx.lineWidth = 1.5; polyline(b, 0, N - 1); ctx.globalAlpha = 1;
   }
   // trails: width shows pace (% of target speed for the race's average wind) when it is known
   for (const b of boats) {
     const a = state.trail === Infinity ? 0 : Math.max(0, ii - Math.round(state.trail * HZ));
     if (state.paceTrail && b.track.pace) {
-      ctx.strokeStyle = b.color; ctx.lineCap = "round";
+      ctx.strokeStyle = col(b); ctx.lineCap = "round";
       const step = state.trail === Infinity || state.trail > 600 ? 2 : 1;
       for (let i = a + step; i <= ii; i += step) {
         if (!b.ok[i] || !b.ok[i - step]) continue;
         const pc = b.track.pace[i];
-        ctx.globalAlpha = 0.3 + 0.7 * (i - a) / Math.max(1, ii - a);
+        ctx.globalAlpha = (done(b) ? 0.5 : 1) * (0.3 + 0.7 * (i - a) / Math.max(1, ii - a));
         ctx.lineWidth = paceWidth(pc);
         ctx.beginPath(); ctx.moveTo(sx(b.x[i - step]), sy(b.y[i - step])); ctx.lineTo(sx(b.x[i]), sy(b.y[i])); ctx.stroke();
       }
@@ -416,7 +433,7 @@ function draw() {
       const grad = 6;
       for (let k = 0; k < grad; k++) {
         const s0 = a + Math.floor((ii - a) * k / grad), s1 = a + Math.floor((ii - a) * (k + 1) / grad);
-        ctx.strokeStyle = b.color; ctx.globalAlpha = 0.25 + 0.75 * (k + 1) / grad; ctx.lineWidth = 2.5; polyline(b, s0, s1 + 1);
+        ctx.strokeStyle = col(b); ctx.globalAlpha = (done(b) ? 0.5 : 1) * (0.25 + 0.75 * (k + 1) / grad); ctx.lineWidth = 2.5; polyline(b, s0, s1 + 1);
       }
     }
     ctx.globalAlpha = 1;
@@ -425,12 +442,15 @@ function draw() {
   // boats
   boats.forEach((b, k) => {
     const p = at(b, state.i); if (!p) return;
-    hull(sx(p.x), sy(p.y), (p.hdg ?? p.cog) - ROT, b.color, k === state.follow);
-    ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
-    ctx.strokeText(b.name, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(b.name, sx(p.x) + 12, sy(p.y) - 10);
+    const fin = done(b);
+    hull(sx(p.x), sy(p.y), (p.hdg ?? p.cog) - ROT, col(b), k === state.follow);
+    ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = fin ? C.muted : C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
+    const nm = fin ? b.name + " · finished" : b.name;
+    ctx.strokeText(nm, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(nm, sx(p.x) + 12, sy(p.y) - 10);
   });
 }
 // 60% → 1 px, 100% → 3 px, 150% → 5.4 px (the old 100% width), capped at 6.5 px
+const FIN_GREY = "#5d7280";
 function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 + (pc - 60) * 0.049)); }
 function paceLegend() {
   const x = 18, y = H - 128;
@@ -481,7 +501,34 @@ function drawWind() {
     else { sh.textContent = (d > 0 ? "+" : "−") + Math.abs(d) + "°"; sh.className = "sh " + (d > 0 ? "right" : "left"); shc.textContent = d > 0 ? "veered right" : "backed left"; }
   }
   const tws = R.wind.tws ? R.wind.tws[Math.min(R.wind.tws.length - 1, Math.floor(state.i / R.wind.every))] : null;
+  drawTide();
   $("twdSrc").innerHTML = (avg != null ? `Race average <b>${avg}°</b>` : "") + (tws != null ? ` · about <b>${Math.round(tws)} kt</b>` : "") + `<br>${srcText}`;
+}
+function tideRow() {
+  if (!TIDE) return "";
+  const t0 = M.gun_ms ?? M.t0_ms, t1 = M.t0_ms + N / HZ * 1000, a = tideAt(t0), z = tideAt(t1);
+  if (!a) return "";
+  const turned = z && z.ebb !== a.ebb;
+  const evs = TIDE.events.filter(e => e.t_ms > t0 - 6.5 * 3600e3 && e.t_ms < t1 + 6.5 * 3600e3).map(e => `${e.type === "H" ? "high" : "low"} ${fmtLocal(e.t_ms)} (${e.ft.toFixed(1)} ft)`).join(", ");
+  return `<tr><td>Tide</td><td>${turned ? tideWords(a) + " → " + tideWords(z) : tideWords(a) + (a.ebb ? ", going out" : ", coming in")}</td><td>${turned ? `turned during the race · ` : `${a.strength} at the start · `}${evs}</td></tr>`;
+}
+// tide: between high and low water it ebbs (goes out), between low and high it floods (comes in)
+const TIDE = M.tide;
+const fmtLocal = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+function tideAt(ms) {
+  if (!TIDE || TIDE.events.length < 2) return null;
+  const ev = TIDE.events; let j = ev.findIndex(e => e.t_ms > ms);
+  if (j <= 0) return null;
+  const a = ev[j - 1], z = ev[j], f = (ms - a.t_ms) / (z.t_ms - a.t_ms);
+  const strength = f < 1 / 6 || f > 5 / 6 ? "near slack" : f >= 1 / 3 && f <= 2 / 3 ? "strongest" : f < .5 ? "building" : "easing";
+  return { ebb: a.type === "H", prev: a, next: z, strength };
+}
+function tideWords(t) { return t.ebb ? "Ebb" : "Flood"; }
+function drawTide() {
+  const el = $("tide"), t = tideAt(M.t0_ms + state.i / HZ * 1000);
+  if (!t) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<b>${t.ebb ? "Ebb" : "Flood"}</b>${t.ebb ? "going out" : "coming in"}, ${t.strength}<span class="nx"><br>${t.next.type === "H" ? "High" : "Low"} water ${fmtLocal(t.next.t_ms)} · NOAA Northport</span>`;
 }
 const srcText = { manual: "set by hand", tacks: "estimated from the fleet's tacks", "start line": "square to the start line", "atlas tack headings": "from Atlas tack headings", none: "unknown, pass --twd" }[M.twd_source] || "";
 $("orient").textContent = "Wind up"; $("orient").setAttribute("aria-pressed", "true");
@@ -691,11 +738,11 @@ function renderDebrief() {
     const fmtT = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     const moved = c => { const parts = []; for (const [k, lbl] of [["windward", "W"], ["leeward", "L"]]) { const d = c[k + "_moved_m"]; if (d != null && d >= 30) parts.push(lbl + " " + d + " m"); } return parts.length ? parts.join(", ") : "—"; };
     h += `<div><h2>${esc(DAY.title)}</h2><p class="note">${DAY.races.length} races found${DAY.races.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. Course change lists marks that moved 30 m or more since the race before. Click a race to open it.</p>
-    <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Course</th><th>Course change</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
+    <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Tide</th><th>Course</th><th>Course change</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
     const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
     for (const r of DAY.races) {
       const c = r.course || {};
-      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebb, out" : "Flood, in") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
     }
     h += `</tbody></table></div></div>`;
   }
@@ -717,7 +764,8 @@ function renderDebrief() {
     <tr><td>Read from the beats</td><td>${WS.up != null ? "≈ " + Math.round(WS.up) + " kt" : "—"}</td><td>upwind speed flattens above 12 kt, so beats cannot read a fresh breeze</td></tr>
     <tr><td>Read from the runs</td><td>${WS.down != null ? "≈ " + Math.round(WS.down) + " kt" : "—"}</td><td>${WS.down != null && WS.down >= 8 ? "planing" : "displacement mode"} downwind</td></tr>
     <tr><td>Direction</td><td>${avg != null ? avg + "°" : "—"}</td><td>${sl != null ? `shifts from ${sl > 0 ? "+" : "−"}${Math.abs(sl)}° to ${sr >= 0 ? "+" : "−"}${Math.abs(sr)}° around the race average` : ""}</td></tr>
-    </tbody></table></div></div>`;
+    ${tideRow()}
+    </tbody></table></div>${TIDE ? `<p class="note">Tide from NOAA predictions for ${esc(TIDE.station_name)} (station ${TIDE.station}). It ebbs (goes out) from high water to low and floods (comes in) from low to high, running hardest mid-tide. Currents in the harbor can turn a little after the predicted high or low.</p>` : ""}</div>`;
   }
   if (GUN != null && !R.line) {
     h += `<div><h2>Start</h2><p class="note">${M.start_estimated ? "No race timer was used, so the start is when boats crossed the estimated line (square to the wind, through where the fleet started and finished). Treat it as within a few seconds." : ""} Pace before the gun is speed against close-hauled target speed for the race's wind, so a good start builds to about 100% at the gun. Nobody pinged the start line, so distance to the line and line position are not available. Ping both ends on the Atlas next time to get them.</p>

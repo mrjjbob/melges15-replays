@@ -328,3 +328,15 @@ def test_pace(race):
         assert 70 < np.median(p) < 130                       # the fleet sails near its own average
         assert b["summary"]["up_pace"] and b["summary"]["down_pace"]
         assert all("pace" in leg for leg in b["legs"])
+
+
+def test_tide_and_coast_for_northport():
+    from datetime import datetime, timezone
+    from sailreplay import local
+    t = int(datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    s = local.tide_summary(t, t + 20 * 60_000)
+    assert s["state"] == "ebb"                      # high 15:26Z, low 21:53Z: going out
+    assert s["events"][0]["type"] == "H" and s["events"][-1]["type"] == "L"
+    c = local.coastline_near(40.914, -73.363)
+    assert c and len(c["lines"]) >= 1
+    assert local.coastline_near(41.5, -71.3) is None   # outside the bundled area
