@@ -14,6 +14,8 @@ Files from every boat on the same day are put together automatically: one page p
 
 You need a free GitHub account. If you are not a collaborator yet, GitHub offers to make your upload a pull request. It goes live once it is merged.
 
+**No GitHub account?** The fleet uploader in [`uploader/`](uploader) lets sailors email their file straight from the Vakaros Connect share button, or use a simple upload page. See its README to set it up.
+
 ## The fleet
 
 `fleet.json` lists the Melges 15 fleet by sail number, as the club scores it (Frostbite SI 13.6). It starts with the boats from the 2025–26 results. Uploads are matched to a boat by, in order:

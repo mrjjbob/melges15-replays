@@ -1,0 +1,57 @@
+# Fleet uploader (no GitHub account needed)
+
+Sailors get their `.vkx` files onto the site in either of two ways:
+
+- **Email**, straight from the Vakaros Connect share button: Share → Mail → send to the fleet address, with the sail number in the subject. New mail is checked every 5 minutes, the file is added to `logs/`, and the sender gets a reply.
+- **Upload page**: a simple web page where they pick their boat and the file.
+
+Both run as a small Google Apps Script on a Gmail account set up for the fleet. It is free and needs no server. The script holds a GitHub token that can only change the files in this repository.
+
+## Set it up (about 15 minutes, once)
+
+1. **Make a Gmail account for the fleet**, for example `cyc.melges15.uploads@gmail.com`. This becomes the address sailors send to.
+
+2. **Make a GitHub token** (signed in as the repository owner): github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
+   - Repository access: **Only select repositories** → `melges15-replays`
+   - Permissions → Repository permissions → **Contents: Read and write**
+   - Expiration: up to a year (put a reminder in your calendar to renew it)
+   - Copy the token.
+
+3. **Create the script** (signed in as the fleet Gmail): go to script.google.com → **New project**, and name it "Fleet uploader".
+   - Replace everything in `Code.gs` with this folder's `Code.gs`.
+   - **+ → HTML**, name it `Upload` exactly, and paste in this folder's `Upload.html`.
+
+4. **Settings**: ⚙ Project Settings → Script properties → add:
+
+   | Property | Value |
+   |---|---|
+   | `GITHUB_TOKEN` | the token from step 2 |
+   | `REPO` | `mrjjbob/melges15-replays` |
+   | `BRANCH` | `main` |
+   | `SITE_URL` | `https://mrjjbob.github.io/melges15-replays/` |
+   | `UPLOAD_PASSWORD` | a fleet password for the upload page (optional) |
+
+5. **Turn on email checking**: back in the editor choose the `setup` function and press **Run**. Google asks for permission. Because this is your own script it says "Google hasn't verified this app": choose **Advanced → Go to Fleet uploader** and **Allow**.
+
+6. **Publish the upload page**: **Deploy → New deployment** → type **Web app**. Set Execute as **Me** and Who has access **Anyone**, then press **Deploy** and copy the web app URL.
+
+7. **Point the site at it**: add to `site.json`:
+
+   ```json
+   "upload_url": "https://script.google.com/macros/s/…/exec",
+   "upload_email": "cyc.melges15.uploads@gmail.com"
+   ```
+
+   The "Add your race" box on the site then shows the email steps, with the upload page as a second option.
+
+## How files are matched to boats
+
+The sail number from the subject line (email) or the boat picked on the page is put at the front of the file name, for example `302_Rubel__Bob_s_Vakaros_11-8-2026.vkx`, and the site matches boats by sail number. Without a sail number the file keeps the name Vakaros gave it, which usually carries the owner's name and is matched by surname.
+
+A file that is already there is not added twice. Anything that is not a `.vkx` file is turned away.
+
+## If something goes wrong
+
+- In the script editor, **Executions** lists every mail check and upload, with any error.
+- "GitHub said 401": the token has expired or was pasted wrong. Make a new one (step 2) and update `GITHUB_TOKEN`.
+- To stop it: Triggers (clock icon) → delete the `checkMail` trigger, and Deploy → Manage deployments → archive the web app.

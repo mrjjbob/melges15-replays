@@ -99,14 +99,19 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     </section>
     <aside class="add" id="add">
       <h3>Add your race</h3>
-      <ol>
+      <ol id="steps-mail" hidden>
+        <li>After sailing, open <b>Vakaros Connect</b> and pick the session.</li>
+        <li>Tap <b>Share</b>, choose the <code>.vkx</code> file and send it with <b>Mail</b> to <a id="mailto" href="#"><b id="email"></b></a>. Put your sail number in the subject.</li>
+        <li>You get a reply when it is in. Your boat appears on that day's replay within a few minutes, raced against everyone else who sailed.</li>
+      </ol>
+      <ol id="steps-gh">
         <li>After sailing, open <b>Vakaros Connect</b>, pick the session, and export it as a <code>.vkx</code> file.</li>
         <li>Keep the name it gives you, like <code>Your Name_s_Vakaros_11-8-2026.vkx</code>. Boats are matched to the fleet list by surname, or put your sail number in the name, like <code>302.vkx</code>.</li>
-        <li>Upload it with the button below: drag the file in, then press <b>Commit changes</b>.</li>
-        <li>The site rebuilds itself. Your boat appears on that day's replay within about two minutes, raced against everyone else who sailed.</li>
+        <li>Upload it with the button below.</li>
+        <li>The site rebuilds itself. Your boat appears on that day's replay within a few minutes, raced against everyone else who sailed.</li>
       </ol>
       <a class="btn" id="upload" href="#">Upload .vkx files</a>
-      <p class="fine" id="acct">You need a free GitHub account. If you are not on the fleet's list yet, GitHub turns your upload into a request, and it goes live once it is approved.</p>
+      <p class="fine" id="acct">You need a free GitHub account with access to the fleet's repository.</p>
       <p class="fine">Ping both ends of the start line on your Atlas and use its race timer. That turns on start-line analysis for the whole fleet.</p>
     </aside>
   </div>
@@ -171,6 +176,12 @@ function renderDay(list, d) {
 }
 if (S.upload_url) $("upload").href = S.upload_url;
 else { $("upload").hidden = true; $("acct").textContent = "Uploads open once this site is on GitHub."; }
+if (S.upload_email) {
+  $("steps-mail").hidden = false; $("steps-gh").hidden = true;
+  $("email").textContent = S.upload_email; $("mailto").href = "mailto:" + S.upload_email + "?subject=Sail%20number%3A%20";
+  $("upload").textContent = "Or upload on a web page";
+  $("acct").textContent = "No account needed.";
+} else if (S.upload_page) $("acct").textContent = "No account needed.";
 if (S.problems && S.problems.length) {
   const p = $("problems"); p.hidden = false;
   p.querySelector("summary").textContent = `${S.problems.length} file${S.problems.length === 1 ? "" : "s"} could not be used`;

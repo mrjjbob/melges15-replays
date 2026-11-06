@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  :root { --bg: #091620; --panel: #0f2230; --ink: #e4eef3; --muted: #86a1b0; --rule: #213c4c; --accent: #f2b33d; --good: #5fd08a; --bad: #e85d5d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 28px 16px 48px; display: grid; gap: 18px; }
+  h1 { margin: 0; font-size: 30px; line-height: 1.1; }
+  p { margin: 0; color: var(--muted); }
+  label { display: grid; gap: 6px; font-weight: 600; }
+  select, input[type=password], input[type=text] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; }
+  .drop { border: 2px dashed var(--rule); border-radius: 14px; padding: 26px 16px; text-align: center; background: var(--panel); }
+  .drop input { font: inherit; color: var(--muted); max-width: 100%; }
+  button { font: 700 18px/1 -apple-system, "Segoe UI", system-ui, sans-serif; color: #12202b; background: var(--accent); border: 0; border-radius: 12px; padding: 16px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  li { background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+  li.ok b { color: var(--good); } li.bad b { color: var(--bad); }
+  .alt { border-top: 1px solid var(--rule); padding-top: 16px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Upload your race</h1>
+  <p>Pick your boat and your <b>.vkx</b> file from Vakaros Connect. It shows up on the site in about 3 minutes.</p>
+
+  <label>Your boat
+    <select id="sail">
+      <option value="">Choose…</option>
+      <? boats.forEach(function (b) { ?><option value="<?= b.sail ?>"><?= b.sail ?> <?= b.name ?></option><? }); ?>
+      <option value="other">Not listed</option>
+    </select>
+  </label>
+
+  <? if (needPassword) { ?>
+  <label>Fleet password <input type="password" id="pw" autocomplete="current-password"></label>
+  <? } ?>
+
+  <div class="drop"><input type="file" id="file" accept=".vkx,application/octet-stream" multiple></div>
+  <button id="go" disabled>Upload</button>
+  <ul id="out"></ul>
+
+  <div class="alt">
+    <p><b>Easier from your phone:</b> in Vakaros Connect open the session, tap Share, choose Mail and send it to <b><?= email ?></b>. Put your sail number in the subject.</p>
+  </div>
+  <? if (site) { ?><p><a href="<?= site ?>">Back to the race site</a></p><? } ?>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const pw = () => ($("pw") ? $("pw").value : "");
+  const ready = () => { $("go").disabled = !($("file").files.length && $("sail").value); };
+  $("file").onchange = ready; $("sail").onchange = ready;
+  function add(cls, html) { const li = document.createElement("li"); li.className = cls; li.innerHTML = html; $("out").appendChild(li); return li; }
+  function send(file) {
+    return new Promise(res => {
+      const li = add("", `${file.name}: uploading…`);
+      const r = new FileReader();
+      r.onload = () => {
+        const data = String(r.result).split(",")[1];
+        google.script.run
+          .withSuccessHandler(x => { li.className = x.ok ? "ok" : "bad"; li.innerHTML = `${file.name}: <b>${x.msg}</b>`; res(x); })
+          .withFailureHandler(e => { li.className = "bad"; li.innerHTML = `${file.name}: <b>${e.message}</b>`; res({ ok: false }); })
+          .uploadFromPage({ name: file.name, data, sail: $("sail").value === "other" ? "" : $("sail").value, password: pw() });
+      };
+      r.readAsDataURL(file);
+    });
+  }
+  $("go").onclick = async () => {
+    $("go").disabled = true;
+    for (const f of $("file").files) await send(f);
+    $("file").value = ""; ready();
+  };
+</script>
+</body>
+</html>

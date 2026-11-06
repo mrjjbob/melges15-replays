@@ -268,12 +268,15 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         rd = [d for d in days if d["date"] == rg.get("date") and d["races"]]
         if rd:
             standings.append(score_series(rg["name"], rd, kind="regatta", discard_from=int(rg.get("discard_from", 5))))
-    upload_url = f"https://github.com/{repo}/upload/{branch}/logs" if repo else None
+    # the fleet's upload page and email (see uploader/), or else GitHub's own upload page
+    upload_url = site_cfg.get("upload_url") or (f"https://github.com/{repo}/upload/{branch}/logs" if repo else None)
     manifest = {
         "title": site_cfg.get("title", "Race Replays"),
         "club": site_cfg.get("club", ""),
         "updated": datetime.now(timezone.utc).isoformat(timespec="minutes"),
         "upload_url": upload_url,
+        "upload_page": bool(site_cfg.get("upload_url")),
+        "upload_email": site_cfg.get("upload_email"),
         "repo_url": f"https://github.com/{repo}" if repo else None,
         "days": days, "problems": problems,
         "boat_count": len({b for d in days for b in d["boats"]}),
