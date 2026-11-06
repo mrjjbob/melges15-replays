@@ -66,69 +66,115 @@ async def _download(args) -> None:
                 if not sessions:
                     print("  no sessions on the unit")
                     continue
+                now = datetime.now(timezone.utc)
+                newest = max(sessions, key=lambda x: x.index)
                 for sess in sessions:
                     started = datetime.fromtimestamp(sess.start_sec, tz=timezone.utc)
-                    if since and started < since:
+                    ended = datetime.fromtimestamp(sess.end_sec, tz=timezone.utc)
+                    # the session being recorded right now has no proper end yet: the unit reports
+                    # its end as "now", or nonsense dates and sizes. Skip it; switching off closes it.
+                    if sess.index == newest.index and (ended > now - timedelta(minutes=10) or started > now
+                                                       or sess.total_chunks > 200_000 or sess.duration_sec == 0):
+                        print(f"  session {sess.index}: still recording, skipped. Switch the Atlas off to close it, then download again.")
+                        continue
+                    if started > now + timedelta(days=1) or sess.total_chunks > 200_000 or sess.total_chunks <= 0:
+                        print(f"  session {sess.index}: unit reports {started:%Y-%m-%d}, {sess.total_chunks} chunks; looks damaged, skipped")
+                        continue
+                    if since and ended < since:
                         continue
                     if sess.duration_sec < args.min_minutes * 60:
                         continue
-                    # damaged entries in the unit's session list: dates in the future, absurd sizes
-                    if (started > datetime.now(timezone.utc) + timedelta(days=1) or sess.duration_sec > 18 * 3600
-                            or sess.total_chunks > 60_000 or sess.total_chunks <= 0):
-                        print(f"  session {sess.index}: unit reports {started:%Y-%m-%d}, "
-                              f"{sess.total_chunks} chunks; looks damaged, skipped")
-                        continue
                     name = f"{slug(boat)}_{started:%Y%m%d_%H%M}_s{sess.index}.vkx"
                     path = out / name
-                    if path.exists() and not args.force:
-                        print(f"  {name}  already downloaded")
+                    skip = path.with_suffix(".skip")
+                    if (path.exists() or skip.exists()) and not args.force:
                         continue
-                    skip = (path.with_suffix(".skip"))
-                    if skip.exists() and not args.force:
-                        continue
+                    a, b = sess.start_chunk, sess.end_chunk
                     if not args.no_probe:
-                        moved = await _probe_moving(client, sess, AtlasClient)
-                        if moved is False:
-                            print(f"  {name}  {sess.duration_sec/60:.0f} min, boat never sailed, skipped")
+                        win = await _sailing_window(client, sess, AtlasClient)
+                        if win is False:
+                            print(f"  {name}  {sess.duration_sec/3600:.1f} h, boat never sailed, skipped")
                             skip.write_text("no sailing found in a sample of this session\n")
                             continue
-                    print(f"  {name}  {sess.duration_sec/60:.0f} min, {sess.total_chunks} chunks", end="", flush=True)
+                        if win:
+                            a, b = win
+                    total = b - a + 1
+                    part = "" if total == sess.total_chunks else f" (sailing part: {total} of {sess.total_chunks})"
+                    print(f"  {name}  {total} chunks{part}", end="", flush=True)
                     records, done = [], 0
-                    async for chunk_id, data in client.stream_chunks(sess):
+                    async for chunk_id, data in client.stream_chunks(sess, chunk_ids=list(range(a, b + 1))):
                         records.append(AtlasClient._assemble_chunk(chunk_id, data))
                         done += 1
                         if done % 50 == 0:
-                            print(f"\r  {name}  {done}/{sess.total_chunks} chunks", end="", flush=True)
+                            print(f"\r  {name}  {done}/{total} chunks{part}", end="", flush=True)
+                    data = b"".join(records)
+                    log = vkx.parse_bytes(data)
+                    mins = vkx.sailing_minutes(log)
+                    if mins < args.min_sailing:
+                        print(f"\r  {name}  only {mins:.0f} min of sailing, not kept" + " " * 20)
+                        skip.write_text(f"only {mins:.1f} min of sailing\n")
+                        continue
+                    w = vkx.sailing_window(log, margin_s=900)
+                    if w:
+                        data = vkx.crop_bytes(data, *w)
+                        log = vkx.parse_bytes(data)
                     tmp = path.with_suffix(".part")
-                    tmp.write_bytes(b"".join(records))
+                    tmp.write_bytes(data)
                     tmp.replace(path)
-                    missing = sess.total_chunks - done
-                    log = vkx.parse_file(path)
-                    print(f"\r  {name}  saved: {len(log.track)} fixes"
-                          + (f", {missing} chunks could not be read" if missing else ""))
+                    missing = total - done
+                    print(f"\r  {name}  saved: {mins:.0f} min of sailing, {len(log.track)} fixes"
+                          + (f", {missing} chunks could not be read" if missing else "") + " " * 10)
         except Exception as e:  # keep going with the next boat
             print(f"  failed: {e}")
 
 
-async def _probe_moving(client, sess, AtlasClient, samples: int = 8, min_kt: float = 2.5):
-    """Fetch a handful of chunks spread through a session and see if the boat ever sailed.
-    Returns True/False, or None if the sample could not be read (then download anyway)."""
-    n = sess.total_chunks
-    if n <= samples * 2:
-        return None
-    ids = sorted({sess.start_chunk + int(n * (k + 0.5) / samples) for k in range(samples)})
-    recs = []
+async def _chunk_moving(client, sess, AtlasClient, cid: int, min_kt: float = 2.5):
+    """True/False for whether the boat was sailing in one chunk, None if unreadable."""
     try:
-        async for cid, data in client.stream_chunks(sess, chunk_ids=ids):
-            recs.append(AtlasClient._assemble_chunk(cid, data))
+        async for c, data in client.stream_chunks(sess, chunk_ids=[cid]):
+            log = vkx.parse_bytes(AtlasClient._assemble_chunk(c, data))
+            if not log.track:
+                return None
+            return sum(1 for r in log.track if r["sog_kt"] >= min_kt) >= 3
     except Exception:
         return None
-    if not recs:
+    return None
+
+
+async def _sailing_window(client, sess, AtlasClient, samples: int = 32, margin_s: int = 900):
+    """Find the stretch of a session where the boat was sailing without downloading all of it.
+    Samples chunks through the session, then narrows the first and last sailing points down.
+    Returns (first_chunk, last_chunk), False if the boat never sailed, None if unsure (download all)."""
+    lo_c, hi_c, n = sess.start_chunk, sess.end_chunk, sess.total_chunks
+    if n <= 60:
         return None
-    log = vkx.parse_bytes(b"".join(recs))
-    if not log.track:
+    ids = sorted({lo_c + int(n * (k + 0.5) / samples) for k in range(samples)})
+    marks = {}
+    for cid in ids:
+        marks[cid] = await _chunk_moving(client, sess, AtlasClient, cid)
+    if all(v is None for v in marks.values()):
         return None
-    return max(r["sog_kt"] for r in log.track) >= min_kt
+    moving = [c for c in ids if marks[c]]
+    if not moving:
+        return False
+
+    async def edge(still, sail):                  # bisect between a still chunk and a sailing one
+        while abs(sail - still) > 6:
+            mid = (still + sail) // 2
+            m = await _chunk_moving(client, sess, AtlasClient, mid)
+            if m:
+                sail = mid
+            else:
+                still = mid
+        return sail
+
+    before = [c for c in ids if c < moving[0]]
+    after = [c for c in ids if c > moving[-1]]
+    first = await edge(before[-1], moving[0]) if before else lo_c
+    last = await edge(after[0], moving[-1]) if after else hi_c
+    per_s = n / max(1, sess.duration_sec)
+    m = int(margin_s * per_s) + 2
+    return max(lo_c, first - m), min(hi_c, last + m)
 
 
 def cmd_download(args) -> None:
@@ -311,7 +357,8 @@ def main(argv=None) -> None:
     d.add_argument("--days", type=float, default=21, help="only sessions from the last N days (0 = all, default 21)")
     d.add_argument("--min-minutes", type=float, default=3, help="skip sessions shorter than this (default 3)")
     d.add_argument("--force", action="store_true", help="download again even if the file exists")
-    d.add_argument("--no-probe", action="store_true", help="download every session, even ones where the boat never moved")
+    d.add_argument("--no-probe", action="store_true", help="download whole sessions, even parked stretches")
+    d.add_argument("--min-sailing", type=float, default=10, help="keep sessions with at least this many minutes of sailing (default 10)")
     d.set_defaults(func=cmd_download)
 
     i = sub.add_parser("info", help="summarise .vkx files")

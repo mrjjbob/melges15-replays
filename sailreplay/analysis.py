@@ -237,6 +237,10 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
         while len(c) > 2 and c[-1][0] == -1 and c[-1][2] - c[-1][1] < 90 * hz:
             c = c[:-1]                               # bearing away after finishing
         a, b = c[0][1], c[-1][2]
+        # a race is sailed: a parked or drifting boat (GPS wander, a boat on a trailer) is not racing
+        seg = s.sog[a:b]
+        if not len(seg) or np.nanmedian(seg) < 2.0 or np.nanmean(seg > 2.0) < 0.6:
+            continue
         # sharpen the start: first moment the boat is properly going upwind
         first = vmg[a:c[0][2]]
         target = 0.6 * np.nanmedian(first) if np.isfinite(np.nanmedian(first)) else 1.0
@@ -278,8 +282,17 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
                 ends = [e["t"] for e in log.timer if e["event"] == "race_end" and e["t"] > g and (nxt is None or e["t"] < nxt)]
                 if ends:
                     fin[name] = min(ends)
-            races.append({"start_ms": g, "estimated": False, "finish": fin, "marks": [], "source": "timer"})
-        return races
+            # a timer started on the dock or in the car is not a race: someone has to sail after the gun
+            sailed = False
+            for _, log in boats:
+                after = [r for r in log.track if g <= r["t"] <= g + 20 * 60_000 and r["sog_kt"] >= 2.0]
+                if len(after) >= 180 * max(1, (log.log_rate_hz or 2)) // 2:
+                    sailed = True
+                    break
+            if sailed:
+                races.append({"start_ms": g, "estimated": False, "finish": fin, "marks": [], "source": "timer"})
+        if races:
+            return races
     found = []                                       # (start, name, chain)
     for name, log in boats:
         for c in _course_chains(log):

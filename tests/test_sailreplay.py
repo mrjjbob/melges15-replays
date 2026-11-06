@@ -195,3 +195,80 @@ def test_site_builds(tmp_path):
     m = site.build_site(logs, tmp_path / "_site", site_cfg={"series": [{"name": "P1", "start": "2026-10-01"}]}, repo="a/b", log=lambda *a: None)
     assert (tmp_path / "_site" / "results.html").exists() and (tmp_path / "_site" / "index.html").exists()
     assert m["days"][0]["series"] == "P1" and m["days"][0]["races"] == 1
+
+
+class _FakeAtlas:
+    """Stands in for atlas_ble_client.AtlasClient: sessions made of 1-page chunks."""
+    chunk_s = 60
+
+    def __init__(self, sessions):
+        self.sessions = sessions          # list of (SessionInfo, speed_fn(t_s) -> m/s)
+        self.fetched = 0
+
+    from atlas_ble_client import AtlasClient as _Real
+    _assemble_chunk = staticmethod(_Real._assemble_chunk)
+
+    def _chunk(self, sess, fn, cid):
+        w = VkxWriter()
+        t0 = sess.start_sec + (cid - sess.start_chunk) * self.chunk_s
+        for k in range(0, self.chunk_s * 2):               # 2 Hz
+            ts = t0 + k / 2
+            w.pvo(ts * 1000, 40.9 + k * 1e-6, -73.36, fn(ts - sess.start_sec), 10, 10, 0, 0)
+        page = w.bytes()
+        return b"\x00" * 8 + page[8:-3] + b"\x00" * 5
+
+    async def list_sessions(self):
+        return [s for s, _ in self.sessions]
+
+    async def stream_chunks(self, sess, chunk_ids=None):
+        fn = next(f for s, f in self.sessions if s.index == sess.index)
+        ids = chunk_ids if chunk_ids is not None else range(sess.start_chunk, sess.end_chunk + 1)
+        for c in ids:
+            if sess.end_chunk > 10_000_000:
+                raise AssertionError("tried to stream the live session")
+            self.fetched += 1
+            yield c, self._chunk(sess, fn, c)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def test_downloader_skips_live_and_parked(tmp_path, monkeypatch):
+    import time
+    import atlas_ble_client
+    from atlas_ble_client.client import SessionInfo
+    from sailreplay import cli
+    now = int(time.time())
+    day = 86400
+    # 1: two hours sailing, then 40 h parked.  2: parked all along.  3: live, reported nonsense.
+    s1 = SessionInfo(1, now - 5 * day, now - 5 * day + 42 * 3600, 0, 42 * 60 - 1)
+    s2 = SessionInfo(2, now - 3 * day, now - 3 * day + 3 * 3600, 5000, 5000 + 180 - 1)
+    s3 = SessionInfo(3, now + 4 * 365 * day, now + 4 * 365 * day, 9000, 9000 + 26_000_000)
+    fake = _FakeAtlas([(s1, lambda t: 2.6 if t < 2 * 3600 else 0.05), (s2, lambda t: 0.05), (s3, lambda t: 0.0)])
+
+    class Dev:
+        serial_number = "0228005931"
+
+    class Client:
+        @staticmethod
+        async def find_devices(target_sn=None):
+            return [Dev()]
+
+        _assemble_chunk = staticmethod(_FakeAtlas._assemble_chunk)
+
+        def __new__(cls, dev):
+            return fake
+
+    monkeypatch.setattr(atlas_ble_client, "AtlasClient", Client)
+    cli.main(["--boats", str(tmp_path / "none.json"), "download", "-o", str(tmp_path / "logs"), "--days", "21"])
+    files = sorted(p.name for p in (tmp_path / "logs").iterdir())
+    vk = [f for f in files if f.endswith(".vkx")]
+    assert len(vk) == 1 and "_s1." in vk[0]
+    assert any(f.endswith("_s2.skip") for f in files)
+    log = vkx.parse_file(tmp_path / "logs" / vk[0])
+    span_h = (log.end_ms - log.start_ms) / 3.6e6
+    assert 2.0 <= span_h <= 3.0                                # 2 h sailing + 15 min either side, not 42 h
+    assert fake.fetched < 42 * 60 * 0.25                       # fetched well under a quarter of the session

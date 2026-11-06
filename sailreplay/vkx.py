@@ -206,3 +206,51 @@ def write_csvs(log: VkxLog, out_dir: str | Path, stem: str | None = None) -> lis
                 w.writerow([ts] + [round(v, 7) if isinstance(v, float) else v for v in r.values()])
         written.append(p)
     return written
+
+
+def sailing_minutes(log: VkxLog, min_kt: float = 2.5) -> float:
+    """Minutes spent moving faster than min_kt (gaps over 5 s are not counted)."""
+    t = log.track
+    total = 0.0
+    for a, b in zip(t, t[1:]):
+        dt = (b["t"] - a["t"]) / 1000
+        if dt <= 5 and b["sog_kt"] >= min_kt:
+            total += dt
+    return total / 60
+
+
+def sailing_window(log: VkxLog, min_kt: float = 2.5, margin_s: float = 900) -> tuple[int, int] | None:
+    """(start_ms, end_ms) from the first to the last time the boat was sailing, plus a margin.
+    Single GPS spikes are ignored: it takes 10 s above min_kt within half a minute to count."""
+    t = log.track
+    hits = [r["t"] for r in t if r["sog_kt"] >= min_kt]
+    if len(hits) < 20:
+        return None
+    def steady(i):
+        return sum(1 for h in hits[i:i + 40] if h - hits[i] <= 30_000) >= 20
+    first = next((hits[i] for i in range(len(hits)) if steady(i)), None)
+    last = next((hits[i] for i in range(len(hits) - 1, -1, -1) if steady(max(0, i - 39))), None)
+    if first is None or last is None:
+        return None
+    return int(first - margin_s * 1000), int(last + margin_s * 1000)
+
+
+def crop_bytes(data: bytes, t0_ms: int, t1_ms: int) -> bytes:
+    """Keep only rows between two times (plus the device configuration row), re-paged."""
+    from .vkx_write import VkxWriter
+    w = VkxWriter()
+    i, n = 0, len(data)
+    while i < n:
+        key = data[i]
+        size = ROW_SIZES.get(key)
+        if size is None or i + 1 + size > n:
+            nxt = data.find(b"\xff", i + 1)
+            i = nxt if nxt != -1 else n
+            continue
+        p = data[i + 1:i + 1 + size]
+        if key not in (0xFF, 0xFE):
+            t = struct.unpack_from("<Q", p, 0)[0]
+            if key == 0x08 or t0_ms <= t <= t1_ms:
+                w._row(key, p)
+        i += 1 + size
+    return w.bytes()
