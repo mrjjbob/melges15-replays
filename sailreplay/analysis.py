@@ -217,7 +217,7 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
             merged.append(L)
     def joined(prev, nxt):
         # legs belong to one race if the gap between them is a rounding (75 s), or a reach
-        # (triangle and gold-cup courses) sailed with purpose for up to 5 minutes
+        # (the gold-cup wing mark) sailed with purpose for up to 5 minutes
         gap = nxt[1] - prev[2]
         if gap <= 75 * hz:
             return True

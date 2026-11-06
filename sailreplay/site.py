@@ -220,7 +220,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
             days.append(entry)
             log(f"{day}: {len(boats)} boat(s), no races found")
             continue
-        # course letters from the committee's board, when given in site.json ("courses": {date: ["W", "T", ...]})
+        # course letters from the committee's board, when given in site.json ("courses": {date: ["W", "M", ...]})
         for k, letter in enumerate((site_cfg.get("courses") or {}).get(day, [])):
             if letter and k < len(d["races"]):
                 d["races"][k]["meta"]["course_letter"] = letter
