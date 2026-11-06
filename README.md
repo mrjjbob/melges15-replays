@@ -43,6 +43,15 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
+### Recalls and penalty turns
+
+A boat shows red (its card and its name on the map) while it looks to be sorting out a penalty:
+
+- **Going back:** soon after the start it sails back below the line (20 m or more, downwind for 12 s or more), until it is sailing upwind again. If most of the fleet goes back it is treated as a general recall and nobody is marked.
+- **Penalty turn:** a full circle one way inside 45 seconds (two in a row count as two turns), until the boat is back up to speed. Next to a mark it shows as a mark turn.
+
+These are guesses from GPS against estimated lines and marks, and many penalties are taken without a log showing them, so each one only stays red for a short time (at most about a minute and a half) and they never change the results.
+
 ### Leeward gate
 
 Leeward marks are left to port, so boats round up anticlockwise. If anyone rounds the leeward mark the other way (a starboard rounding), the race is treated as having a gate: the replay shows two gate marks, placed where each group of boats rounded, and the day table marks the course "gate".

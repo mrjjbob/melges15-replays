@@ -372,3 +372,38 @@ def test_leeward_rounding_side_and_gate(tmp_path, monkeypatch):
     r = analysis.find_races(boats)[0]
     lw = next(m for m in r["marks"] if m["kind"] == "leeward")
     assert r["gate"] and {g["rounded"] for g in lw["gate"]} == {"port", "starboard"}
+
+
+def _track(headings, speeds, hz=2):
+    """x, y from a list of headings (deg) and speeds (kt), one per sample."""
+    from types import SimpleNamespace
+    h = np.radians(np.asarray(headings, float)); v = np.asarray(speeds, float) * 0.5144 / hz
+    x = np.cumsum(v * np.sin(h)); y = np.cumsum(v * np.cos(h))
+    return SimpleNamespace(cog=np.degrees(h) % 360, sog=np.asarray(speeds, float), x=x, y=y)
+
+
+def test_penalties_recall_and_turns():
+    hz = 2
+    # wind from the north; beat on starboard at 315, then later a 360 to port while beating
+    beat = [315.0] * 200
+    circle = list((315 - np.arange(0, 361, 12)) % 360)        # 31 samples, anticlockwise
+    s = _track(beat + circle + beat, [5.0] * (400 + len(circle)))
+    pen = analysis._penalties(s, hz, 0, None, None, None, [])
+    assert [p["kind"] for p in pen] == ["turns"] and 95 < pen[0]["t0"] < 105
+    # the same turn next to a mark is a mark penalty
+    mid = 200 + len(circle) // 2
+    pen = analysis._penalties(s, hz, 0, None, None, None, [(s.x[mid] + 10, s.y[mid])])
+    assert pen[0]["kind"] == "mark"
+
+    # recall: up for 15 s, back down for 30 s, then upwind again
+    hd = [0.0] * 30 + [180.0] * 60 + [0.0] * 200
+    s = _track(hd, [4.0] * len(hd))
+    s.cog = np.array(hd)
+    prog = s.y.copy()
+    vmg = 4.0 * np.cos(np.radians(s.cog))
+    pen = analysis._penalties(s, hz, 0, None, vmg, prog, [])
+    rec = [p for p in pen if p["kind"] == "recall"]
+    assert rec and rec[0]["t0"] <= 16 and 44 <= rec[0]["t1"] <= 60
+    # a clean start has nothing
+    s = _track([0.0] * 300, [4.0] * 300)
+    assert analysis._penalties(s, hz, 0, None, np.full(300, 4.0), s.y.copy(), []) == []

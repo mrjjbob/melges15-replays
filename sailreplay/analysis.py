@@ -656,9 +656,20 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     ref = (0.0, 0.0)
     if line:
         ref = ((line["pin_xy"][0] + line["boat_xy"][0]) / 2, (line["pin_xy"][1] + line["boat_xy"][1]) / 2)
+    marks_xy = []
+    for m in (race or {}).get("marks", []):
+        if m["kind"] in ("windward", "leeward", "wing"):
+            for g in (m.get("gate") or [m]):
+                marks_xy.append(((g["lon"] - lon0) * mlon, (g["lat"] - lat0) * mlat))
     out_boats = []
     for s in series:
-        out_boats.append(_analyse_boat(s, grid, hz, gun_i, twd_series, (ux, uy), ref, line, gun_ms, finishes.get(s.name)))
+        out_boats.append(_analyse_boat(s, grid, hz, gun_i, twd_series, (ux, uy), ref, line, gun_ms, finishes.get(s.name),
+                                       marks_xy=marks_xy))
+    # most of the fleet going back is a general recall (or a postponed start), not individual recalls
+    rec = [b for b in out_boats if any(p["kind"] == "recall" for p in b["penalties"])]
+    if len(out_boats) >= 3 and len(rec) > len(out_boats) / 2:
+        for b in rec:
+            b["penalties"] = [p for p in b["penalties"] if p["kind"] != "recall"]
 
     _rank(out_boats)
 
@@ -911,7 +922,89 @@ def _segments(mask_vals, min_len):
     return runs
 
 
-def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, finish_ms=None):
+def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy) -> list:
+    """Things that look like penalties, for showing a boat in red while it sorts them out.
+    These are guesses from GPS: the line and marks are estimates and many penalties are taken
+    without a log being able to tell, so each episode is kept short.
+
+    - recall: soon after the gun the boat turns back below the start and then sets off upwind again.
+    - turns: a full circle (one way, 330°+ inside 45 s) anywhere in the race; 'mark' if it was
+      done next to a mark. Two circles back to back are two turns."""
+    n = len(s.sog)
+    out = []
+    if gun_i is None or gun_i >= n:
+        return out
+    end = finish_i if finish_i is not None else n
+    t = lambda i: _r(i / hz, 1)
+    # ---- returned to the start -----------------------------------------------------------
+    if prog is not None and vmg is not None:
+        w1 = min(end, gun_i + int(100 * hz))
+        p = np.where(np.isfinite(prog), prog, np.nan)
+        best, i_best = -np.inf, None
+        for i in range(gun_i, w1):
+            if not np.isfinite(p[i]):
+                continue
+            if p[i] > best:
+                best, i_best = p[i], i
+            # gone back 20 m or more, after sailing away from the wind for 12 s or more
+            if best - p[i] >= 20 and np.sum(vmg[i_best:i + 1] < -0.8) >= 12 * hz:
+                lo = i_best
+                j_low = i + int(np.nanargmin(p[i:min(end, i + int(120 * hz))]))
+                k_end = None
+                for k in range(j_low, min(end, lo + int(150 * hz))):
+                    seg = vmg[k:k + int(10 * hz)]
+                    if len(seg) and np.nanmin(seg) > 0.8:      # going upwind again, steadily
+                        k_end = k
+                        break
+                if k_end is None:
+                    k_end = min(end - 1, lo + int(150 * hz))
+                out.append({"kind": "recall", "label": "Over early, going back", "t0": t(lo), "t1": t(k_end)})
+                break
+    # ---- circles ---------------------------------------------------------------------------
+    cog = circ_smooth(s.cog, max(1, int(1 * hz)))
+    d = np.nan_to_num(wrap180(np.diff(cog)))
+    d = np.where((np.abs(d) > 60) | (s.sog[1:] < 0.6), 0, d)          # GPS jumps, drifting
+    c = np.concatenate([[0.0], np.cumsum(d)])
+    win = int(45 * hz)
+    i = gun_i + int(20 * hz)
+    while i < end - int(10 * hz):
+        seg = c[i:min(end, i + win)] - c[i]
+        hit = np.nonzero(np.abs(seg) >= 330)[0]
+        if not len(hit):
+            i += max(1, int(hz))
+            continue
+        j = i + int(hit[0])
+        sense = np.sign(seg[hit[0]])
+        # tighten the start: the turn begins where the one-way rotation began
+        a = i
+        while a < j and sense * (c[a + 1] - c[a]) <= 0.5:
+            a += 1
+        # a second circle straight after makes it two turns
+        seg2 = c[j:min(end, j + win)] - c[j]
+        two = len(seg2) and np.max(sense * seg2) >= 300
+        if two:
+            j = j + int(np.nonzero(sense * seg2 >= 300)[0][0])
+        # cleared once going again: speed back to 80% of the speed going in, at most 25 s later
+        v_in = np.nanmedian(s.sog[max(0, a - int(10 * hz)):a + 1])
+        k = j
+        while k < min(end - 1, j + int(25 * hz)) and not (s.sog[k] >= 0.8 * v_in):
+            k += 1
+        near = None
+        if marks_xy:
+            mid = (a + j) // 2
+            dm = [math.hypot(s.x[mid] - mx, s.y[mid] - my) for mx, my in marks_xy]
+            if min(dm) <= 45:
+                near = True
+        label = ("Penalty turn at the mark" if near else ("Two penalty turns" if two else "Penalty turn"))
+        out.append({"kind": "mark" if near else "turns", "label": label, "t0": t(a), "t1": t(min(k, a + int(90 * hz)))})
+        i = k + int(5 * hz)
+    # a turn made while going back to the start is part of the recall
+    rec = [p for p in out if p["kind"] == "recall"]
+    out = [p for p in out if p["kind"] == "recall" or not any(p["t0"] <= r["t1"] and p["t1"] >= r["t0"] for r in rec)]
+    return out
+
+
+def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, finish_ms=None, marks_xy=None):
     n = len(grid)
     dt = 1.0 / hz
     sog = s.sog
@@ -1136,6 +1229,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
             "mg": _r(mg, 0), "mode": [m if m else "" for m in mode.tolist()],
         },
         "manoeuvres": man, "legs": legs, "start": start, "summary": summary,
+        "penalties": _penalties(s, hz, gun_i, finish_i, vmg if have_wind else None, prog if have_wind else None, marks_xy or []),
         "_tws": tws_est, "_racing": racing,
     })
     return res

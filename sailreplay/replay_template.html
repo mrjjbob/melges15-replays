@@ -92,6 +92,11 @@ canvas#map.drag { cursor: grabbing; }
 .mode.down { color: #ffd38a; border-color: #6b5224; }
 .mode.fin { color: var(--ok); border-color: #2c5a3a; }
 .mode.ocs { color: var(--bad); border-color: #6b2a2a; }
+/* a boat sorting out a penalty (going back to the start, or doing turns) */
+.boat.pen { border-color: #8a3434; background: linear-gradient(0deg, rgba(232,93,93,.13), rgba(232,93,93,.13)), var(--panel-2); }
+.boat.pen .nm span { color: var(--bad); }
+.mode.pen { color: #fff; background: #b23c3c; border-color: #b23c3c; }
+td .pen { font: 600 10px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--bad); margin-left: 6px; }
 
 /* transport */
 .transport { display: grid; grid-template-columns: auto auto 1fr auto; gap: 14px; align-items: center; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-top: 1px solid var(--rule); background: var(--panel); }
@@ -458,13 +463,17 @@ function draw() {
     const p = at(b, state.i); if (!p) return;
     const fin = done(b);
     hull(sx(p.x), sy(p.y), (p.hdg ?? p.cog) - ROT, col(b), k === state.follow);
-    ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = fin ? C.muted : C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
+    const pen = !fin && penAt(b, state.i);
+    ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = fin ? C.muted : pen ? C.bad : C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
     const nm = fin ? b.name + " · finished" : b.name;
     ctx.strokeText(nm, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(nm, sx(p.x) + 12, sy(p.y) - 10);
   });
 }
 // 60% → 1 px, 100% → 3 px, 150% → 5.4 px (the old 100% width), capped at 6.5 px
 const FIN_GREY = "#5d7280";
+// the penalty a boat is sorting out at time fi (index), if any
+const penAt = (b, fi) => { const t = fi / HZ; return (b.penalties || []).find(p => t >= p.t0 && t <= p.t1) || null; };
+const PEN_TAG = { recall: "Going back", turns: "Penalty turn", mark: "Mark turn" };
 function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 + (pc - 60) * 0.049)); }
 function paceLegend() {
   const x = 18, y = H - 128;
@@ -608,7 +617,9 @@ function updateFleet() {
     else if (GUN != null && rt >= 0 && p && n > 0) c.gap.textContent = "−" + Math.max(0, Math.round(leadMg - p.mg)) + " m";
     else c.gap.textContent = "";
     const ocs = r.b.start?.ocs && rt >= 0 && rt < 25;
-    const md = fin ? ["fin", "Finished"] : ocs ? ["ocs", "Over early"] : p ? ({ up: ["up", "Upwind"], down: ["down", "Downwind"], reach: ["", "Reach"], slow: ["", "Slow"] }[p.mode] || ["", ""]) : ["", "No data"];
+    const pen = !fin && penAt(r.b, state.i);
+    c.el.classList.toggle("pen", !!pen);
+    const md = fin ? ["fin", "Finished"] : pen ? ["pen", PEN_TAG[pen.kind] || "Penalty"] : ocs ? ["ocs", "Over early"] : p ? ({ up: ["up", "Upwind"], down: ["down", "Downwind"], reach: ["", "Reach"], slow: ["", "Slow"] }[p.mode] || ["", ""]) : ["", "No data"];
     c.tag.className = "mode " + md[0]; c.tag.textContent = md[1];
     c.v.sog.innerHTML = p ? fmtNum(p.sog) + "<small>kt</small>" : "—";
     c.v.vmg.innerHTML = p && p.vmg != null ? fmtNum(p.vmg) + "<small>kt</small>" : "—";
@@ -630,6 +641,8 @@ function drawScrub() {
   sctx.fillStyle = C.accent; sctx.fillRect(8, SH / 2 - 3, X(state.i) - 8, 6);
   // events of the followed boat (or roundings of all)
   const evs = state.follow != null ? boats[state.follow].manoeuvres : boats.flatMap(b => b.manoeuvres.filter(m => m.kind === "rounding"));
+  for (const b of (state.follow != null ? [boats[state.follow]] : boats)) for (const p of b.penalties || []) {
+    sctx.fillStyle = C.bad; sctx.fillRect(X(p.t0 * HZ), SH / 2 - 3, Math.max(2, X(p.t1 * HZ) - X(p.t0 * HZ)), 6); }
   for (const m of evs) { const x = X(m.t * HZ); sctx.fillStyle = m.kind === "rounding" ? "#ff9f40" : m.kind === "tack" ? "#9fd4ff" : "#ffd38a"; sctx.fillRect(x - 1, SH / 2 - 11, 2, 7); }
   if (GUN != null) { const x = X(GUN * HZ); sctx.fillStyle = C.ink; sctx.fillRect(x - 1, 4, 2, SH - 8); sctx.font = "600 11px " + cssv("--f-display"); sctx.fillText(M.start_estimated ? "START" : "GUN", Math.min(x + 4, SW - 40), 12); }
   for (const b of boats) if (b.summary.finish_s != null) { const x = X(b.summary.finish_s * HZ); sctx.fillStyle = b.color; sctx.fillRect(x - 1, SH / 2 + 5, 2, 7); }
@@ -779,7 +792,8 @@ function renderDebrief() {
   h += `<div><h2>${esc(M.title)} results</h2>${notes}<p class="note">Wind ${M.twd_global ?? "—"}° (${esc(srcText)}). Speeds in knots, VMG is speed made good toward the wind upwind and away from it downwind. ${boats.length > 1 ? "Green marks the best in the fleet." : ""}${boats[0].summary.heading_offset != null && boats.length === 1 ? ` Upwind the boat tracked ${Math.abs(boats[0].summary.up_leeway ?? 0).toFixed(0)}° below its heading (leeway plus current). The Atlas reads ${Math.abs(boats[0].summary.heading_offset).toFixed(0)}° off the centreline; the replay corrects for it.` : ""}</p>
   <div class="tbl"><table><thead><tr><th>Boat</th><th>Pos</th><th>Elapsed</th><th>Sailed</th><th>Avg speed</th><th>Upwind VMG</th><th>Upwind speed</th><th>Tack angle</th><th>Downwind VMG</th><th>Downwind speed</th><th>Upwind pace</th><th>Downwind pace</th><th>Tacks</th><th>Tack loss</th><th>Gybes</th><th>Gybe loss</th></tr></thead><tbody>`;
   for (const b of byPos) { const s = b.summary;
-    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}${cell(s.up_pace, "up_pace", 0, true, "%")}${cell(s.down_pace, "down_pace", 0, true, "%")}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
+    const pk = [...new Set((b.penalties || []).map(p => ({ recall: "went back", turns: "turns", mark: "mark turn" })[p.kind]))];
+    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}${pk.map(k => `<span class="pen">${k}</span>`).join("")}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}${cell(s.up_pace, "up_pace", 0, true, "%")}${cell(s.down_pace, "down_pace", 0, true, "%")}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
   h += `</tbody></table></div></div>`;
 
   const WS = R.wind.speed || {};
@@ -840,7 +854,9 @@ function renderMan() {
   let h = `<table><thead><tr><th>Manoeuvre</th><th>Race time</th><th>Speed in</th><th>Lowest</th><th>Drop</th><th>Back to 90%</th><th>Loss</th><th>Turned</th></tr></thead><tbody>`;
   const tl = b.manoeuvres.filter(m => m.kind === "tack").map(m => m.loss_m).filter(x => x != null);
   const med = tl.length ? tl.slice().sort((a, c) => a - c)[Math.floor(tl.length / 2)] : null;
-  for (const m of b.manoeuvres) {
+  const rowsM = b.manoeuvres.concat((b.penalties || []).map(p => ({ t: p.t0, kind: "penalty", label: p.label, pen: p }))).sort((x, y) => x.t - y.t);
+  for (const m of rowsM) {
+    if (m.pen) { h += `<tr class="jump" data-t="${m.t}"><td style="color:var(--bad)">${esc(m.label)}</td><td>${fmtClock(m.t - (GUN ?? 0))}</td><td colspan="6" style="color:var(--muted)">red on the replay for ${Math.round(m.pen.t1 - m.pen.t0)} s · a guess from the GPS</td></tr>`; continue; }
     const name = m.label || (m.kind === "tack" ? "Tack" : "Gybe");
     const bad = m.kind === "tack" && med != null && m.loss_m != null && m.loss_m > med * 1.6 && m.loss_m > 5;
     h += `<tr class="jump" data-t="${m.t}"><td>${name}</td><td>${fmtClock(m.t - (GUN ?? 0))}</td><td>${fmtNum(m.entry_sog)} kt</td><td>${m.min_sog != null ? fmtNum(m.min_sog) + " kt" : "—"}</td><td>${m.drop_pct != null ? m.drop_pct + "%" : "—"}</td><td>${m.recover_s != null ? m.recover_s.toFixed(1) + " s" : m.kind === "rounding" ? "—" : "> 40 s"}</td><td class="${bad ? "flag" : ""}">${m.loss_m != null ? m.loss_m.toFixed(1) + " m" : "—"}</td><td>${m.turn != null ? m.turn + "°" : "—"}</td></tr>`;
