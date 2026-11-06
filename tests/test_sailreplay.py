@@ -286,7 +286,6 @@ def test_downloader_skips_live_and_parked(tmp_path, monkeypatch):
 @pytest.mark.parametrize("course,letter,legs", [
     ("W", "W", ["up", "down", "up"]),
     ("L", "L", ["up", "down"]),
-    ("T", "W", ["up", "down", "up"]),          # a triangle reads as W (see _course_letter)
     ("W2", "W2", ["up", "down", "up", "down", "up"]),
     ("Z", "Z", ["up", "down", "up", "down"]),
 ])

@@ -288,21 +288,19 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
 
 
 # CYC Frostbite Sailing Instructions, section 7: course letters by the legs sailed.
-# Reaching legs to and from a wing mark show up as the "down" part of the lap with a big sideways detour.
 COURSES = {
     "W": "Windward–Leeward–Finish",
     "W2": "Windward–Leeward twice around",
     "L": "Windward–Finish",
-    "T": "Triangle",
     "M": "Modified Gold Cup",
     "Z": "Z pattern",
 }
 
 
 def _course_letter(c, s, p, hz, twa=None):
-    """Course letter from the pattern of legs. A triangle or gold-cup lap cannot be told apart
-    reliably from a run sailed with one gybe at hot light-air angles, so those read as W / W2;
-    the right letter can be set per race in site.json ("courses")."""
+    """Course letter from the pattern of legs. The fleet doesn't sail triangles. A gold-cup lap (M)
+    can't be told apart from a run sailed with one gybe, so it reads as W2; set it per race in
+    site.json ("courses") if needed."""
     seq = tuple(L[0] for L in c)
     return {(1, -1): "L", (1, -1, 1): "W", (1, -1, 1, -1): "Z", (1, -1, 1, -1, 1): "W2"}.get(seq, ""), None
 
