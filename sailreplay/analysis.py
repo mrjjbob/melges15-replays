@@ -502,12 +502,28 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
         xs = [i for i in range(max(1, lo), min(len(q) - 1, hi)) if q[i - 1] < 0 <= q[i]]
         return min(xs, key=lambda i: abs(i - prefer)) if xs else None
 
+    def start_crossing(v, qline):
+        """The crossing that starts the race: going up through the line and staying above it
+        for the next minute (a dip back below before the gun does not count). A boat can set
+        off upwind well below the line, so look up to 2½ minutes after it did."""
+        q = v["q"] - qline(v["a"])
+        lo, hi = max(1, v["ia"] - int(60 * hz)), min(len(q) - 1, v["ia"] + int(150 * hz))
+        for i in range(lo, hi):
+            if q[i - 1] < 0 <= q[i] and np.nanmin(q[i:i + int(60 * hz)]) > -5:
+                return i
+        xs = [i for i in range(lo, hi) if q[i - 1] < 0 <= q[i]]
+        if xs:
+            return min(xs, key=lambda i: abs(i - v["ia"]))
+        # never crossed it: closest approach
+        seg = np.abs(q[lo:hi])
+        return lo + int(np.nanargmin(seg)) if np.isfinite(seg).any() else v["ia"]
+
     # pass 1: one straight line square to the course, to find which side each line is on
     flat = lambda a: q0 + 0 * a
     def times(qs, qf):
         st, fi, a_s, a_f = [], {}, [], []
         for name, v in per.items():
-            i_s = crossing(v, v["ia"] - int(60 * hz), v["ia"] + int(45 * hz), v["ia"], qs) or v["ia"]
+            i_s = start_crossing(v, qs)
             i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], qf, sgn) or v["drop"]
             st.append(int(v["grid"][i_s])); fi[name] = int(v["grid"][i_f])
             a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
