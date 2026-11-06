@@ -503,8 +503,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
         gun_ms = race["start_ms"]
         finishes = dict(race.get("finish") or {})
         if race.get("estimated"):
-            notes.append("No race timer was used, so the start is estimated from when the boat began the first beat, "
-                         "and the finish from the end of the last leg.")
+            notes.append("No race timer was used, so starts and finishes are timed where boats crossed an estimated "
+                         "line, square to the wind with the committee boat between the start and finish ends.")
         guns = [gun_ms]
     if gun_ms is None and guns:
         if race_index >= len(guns):
@@ -595,7 +595,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     if twd_series is not None:
         sel = racing_any if racing_any.any() else np.ones(n, bool)
         twd_avg = circ_mean(twd_series[sel])
-    sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0)
+    sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0, gun_i)
     if line is not None:
         line = {"pin": line["pin"], "boat": line["boat"],
                 "length_m": _r(math.dist(line["pin_xy"], line["boat_xy"]), 0)}
@@ -974,7 +974,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
     return res
 
 
-def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0):
+def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None):
     """Pace: boat speed as a % of Melges 15 target speed for the race's average wind, at the angle
     being sailed. Without a wind sensor the reference has to be one wind speed for the whole race;
     a boat in more breeze, or sailing well, reads over 100%, and one in a lull reads under.
@@ -992,6 +992,20 @@ def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0):
         # an asymmetric boat doesn't sail deeper than ~150 deg; deeper readings are mid-gybe or wind error
         tgt = polar.target_speeds(tws_ref, np.clip(np.abs(np.nan_to_num(twa, nan=90.0)), 40, 150))
         pace = np.where(racing & (sog > 0.8) & np.isfinite(twa), sog / tgt * 100, np.nan)
+        # Before the gun every boat is measured against close-hauled target speed, whatever it is
+        # doing, so the trail shows who is building speed into the start.
+        up_tgt = polar.speed(tws_ref, 45)
+        if gun_i is not None and gun_i > 0:
+            raw = f("sog")
+            pre = np.arange(len(pace)) < gun_i
+            pace = np.where(pre & np.isfinite(raw), _nan_movmean(raw, int(3 * hz)) / up_tgt * 100, pace)
+            if b.get("start") is not None and gun_i < len(pace):
+                st = b["start"]
+                st["pace_at_gun"] = _r(raw[gun_i] / up_tgt * 100, 0) if np.isfinite(raw[gun_i]) else None
+                j = min(len(raw) - 1, gun_i + int(10 * hz))
+                st["pace_10s"] = _r(raw[j] / up_tgt * 100, 0) if np.isfinite(raw[j]) else None
+                k = max(0, gun_i - int(10 * hz))
+                st["pace_10s_before"] = _r(raw[k] / up_tgt * 100, 0) if np.isfinite(raw[k]) else None
         tr["pace"] = _r(pace, 0)
         mode = np.array(tr["mode"], dtype=object)
         for leg in b["legs"]:

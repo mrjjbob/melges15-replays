@@ -433,7 +433,7 @@ function paceLegend() {
   ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "left";
   ctx.fillText("TRAIL WIDTH = PACE", x, y);
   ctx.font = "500 11px " + cssv("--f-data");
-  ctx.fillText(`% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
+  ctx.fillText(GUN != null && raceT(state.i) < 0 ? `% of upwind target, ${R.sides ? R.sides.tws_ref : "?"} kt` : `% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
   [[80, "80%"], [100, "100%"], [150, "150%"]].forEach(([pc, t], k) => {
     const yy = y + 32 + k * 15;
     ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = paceWidth(pc);
@@ -700,16 +700,16 @@ function renderDebrief() {
     </tbody></table></div></div>`;
   }
   if (GUN != null && !R.line) {
-    h += `<div><h2>Start</h2><p class="note">${M.start_estimated ? "Start time is estimated from when the boat began the first beat, so treat these as approximate." : ""} Nobody pinged the start line, so distance to the line and line position are not available. Ping both ends on the Atlas next time to get them.</p>
-    <div class="tbl"><table><thead><tr><th>Boat</th><th>Speed at start</th><th>Speed +10 s</th>${boats.length > 1 ? "<th>Height at 2 min</th>" : ""}</tr></thead><tbody>`;
+    h += `<div><h2>Start</h2><p class="note">${M.start_estimated ? "No race timer was used, so the start is when boats crossed the estimated line (square to the wind, through where the fleet started and finished). Treat it as within a few seconds." : ""} Pace before the gun is speed against close-hauled target speed for the race's wind, so a good start builds to about 100% at the gun. Nobody pinged the start line, so distance to the line and line position are not available. Ping both ends on the Atlas next time to get them.</p>
+    <div class="tbl"><table><thead><tr><th>Boat</th><th>Pace −10 s</th><th>Pace at start</th><th>Pace +10 s</th><th>Speed at start</th><th>Speed +10 s</th>${boats.length > 1 ? "<th>Height at 2 min</th>" : ""}</tr></thead><tbody>`;
     for (const b of byPos) { const s = b.start || {};
-      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td><td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td>${boats.length > 1 ? `<td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td>` : ""}</tr>`; }
+      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td>${paceCells(s)}<td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td>${boats.length > 1 ? `<td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td>` : ""}</tr>`; }
     h += `</tbody></table></div></div>`;
   } else if (GUN != null) {
     h += `<div><h2>Start</h2><p class="note">Distance is measured square to the line at the gun. Line position runs from the pin (0%) to the committee boat (100%). Height is metres to windward of the best boat two minutes after the gun.</p>
-    <div class="tbl"><table><thead><tr><th>Boat</th><th>Behind line at gun</th><th>Speed at gun</th><th>Speed +10 s</th><th>Line position</th><th>Crossed after</th><th>Height at 2 min</th></tr></thead><tbody>`;
+    <div class="tbl"><table><thead><tr><th>Boat</th><th>Behind line at gun</th><th>Pace −10 s</th><th>Pace at gun</th><th>Pace +10 s</th><th>Speed at gun</th><th>Speed +10 s</th><th>Line position</th><th>Crossed after</th><th>Height at 2 min</th></tr></thead><tbody>`;
     for (const b of byPos) { const s = b.start || {};
-      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td><td class="${s.ocs ? "flag" : ""}">${s.dist_to_line_m == null ? "—" : s.ocs ? "Over by " + Math.abs(s.dist_to_line_m).toFixed(1) + " m" : s.dist_to_line_m.toFixed(1) + " m"}</td><td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td><td>${s.cross_pos != null ? s.cross_pos + "%" : s.pos_at_gun != null ? s.pos_at_gun + "%" : "—"}</td><td>${s.cross_s != null ? s.cross_s.toFixed(1) + " s" : "—"}</td><td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td></tr>`; }
+      h += `<tr class="jump" data-t="${GUN}"><td class="nm">${dot(b)}${esc(b.name)}</td><td class="${s.ocs ? "flag" : ""}">${s.dist_to_line_m == null ? "—" : s.ocs ? "Over by " + Math.abs(s.dist_to_line_m).toFixed(1) + " m" : s.dist_to_line_m.toFixed(1) + " m"}</td>${paceCells(s)}<td>${fmtNum(s.sog_at_gun)} kt</td><td>${fmtNum(s.sog_10s)} kt</td><td>${s.cross_pos != null ? s.cross_pos + "%" : s.pos_at_gun != null ? s.pos_at_gun + "%" : "—"}</td><td>${s.cross_s != null ? s.cross_s.toFixed(1) + " s" : "—"}</td><td>${s.height_2min_m != null ? (s.height_2min_m === 0 ? "Best" : s.height_2min_m + " m") : "—"}</td></tr>`; }
     h += `</tbody></table></div></div>`;
   }
 
@@ -731,6 +731,10 @@ function renderDebrief() {
   el.querySelectorAll("tr.jumprace").forEach(tr => tr.onclick = () => { location.hash = "r" + tr.dataset.k; });
   $("manBoat").onchange = e => { debriefBoat = +e.target.value; renderMan(); };
   renderMan(); drawSpeedChart(); drawHeelChart();
+}
+function paceCells(s) {
+  const c = v => `<td class="${v >= 95 ? "best" : v != null && v < 75 ? "flag" : ""}">${v != null ? v + "%" : "—"}</td>`;
+  return c(s.pace_10s_before) + c(s.pace_at_gun) + c(s.pace_10s);
 }
 function renderMan() {
   const b = boats[debriefBoat];
