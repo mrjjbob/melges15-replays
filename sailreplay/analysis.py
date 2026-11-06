@@ -429,9 +429,13 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
             marks.append(mk)
         r["marks"] = marks
         if r["marks"]:
+            r["_fin0"] = dict(r["finish"])
             _fit_line(r, boats)
-        r.pop("_onset", None)
     races.sort(key=lambda r: r["start_ms"])
+    _share_committee(races, boats)
+    for r in races:
+        r.pop("_onset", None)
+        r.pop("_fin0", None)
     return races
 
 
@@ -463,7 +467,41 @@ def _slope(a, q, max_deg=20.0, min_spread=30.0):
     return max(-lim, min(lim, k))
 
 
-def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> None:
+def _share_committee(races: list[dict], boats, near_m: float = 40.0) -> None:
+    """The committee boat stays anchored all day (it only swings on its anchor), and so does the
+    finish mark; only the pin is moved much, to square the line. So when the estimates for
+    races in a row put the committee boat within 40 m of each other, it is the same spot: average
+    them and refit each race's lines from that one committee boat (and one finish mark).
+    The pin stays each race's own."""
+    def xy(p, ref):
+        ml = 111_320 * math.cos(math.radians(ref[0]))
+        return ((p[1] - ref[1]) * ml, (p[0] - ref[0]) * 111_320)
+    est = [r for r in races if r.get("line_est") and r.get("_onset")]
+    groups = []
+    for r in est:
+        rc = r["line_est"]["rc"]
+        g = groups[-1] if groups else None
+        if g:
+            mean = (float(np.mean([q["line_est"]["rc"][0] for q in g])), float(np.mean([q["line_est"]["rc"][1] for q in g])))
+            if math.hypot(*xy(rc, mean)) <= near_m:
+                g.append(r)
+                continue
+        groups.append([r])
+    for g in groups:
+        if len(g) < 2:
+            continue
+        rc = [float(np.mean([r["line_est"]["rc"][k] for r in g])) for k in (0, 1)]
+        fe = [r["line_est"]["finish_end"] for r in g]
+        fm = [float(np.mean([p[k] for p in fe])) for k in (0, 1)]
+        same_fin = all(math.hypot(*xy(p, fm)) <= near_m for p in fe)
+        for r in g:
+            r["finish"] = dict(r["_fin0"])
+            _fit_line(r, boats, fixed_rc=rc, fixed_fin=fm if same_fin else None)
+            r["line_est"]["committee_races"] = len(g)
+
+
+def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
+              fixed_rc=None, fixed_fin=None) -> None:
     """Start and finish lines off one committee boat in the middle: pin ... RC is the start,
     RC ... finish mark is the finish (upwind finish).
 
@@ -570,11 +608,24 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
         rc = (min(a_s) + max(a_f)) / 2 if min(a_s) > max(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
     # pass 2: both lines meet at the committee boat; each tilts to fit its own boats
     q_rc = q0 + k_f * (rc - a_ref)
+    fin_mark_a = None
+    if fixed_rc is not None:                           # the committee boat's spot, shared across races
+        X, Y = (fixed_rc[1] - lon0) * mlon, (fixed_rc[0] - lat0) * 111_320
+        rc, q_rc = X * rx + Y * ry, X * ux + Y * uy
+        if fixed_fin is not None:                      # and the finish mark's: that sets the finish line
+            X, Y = (fixed_fin[1] - lon0) * mlon, (fixed_fin[0] - lat0) * 111_320
+            fa, fq = X * rx + Y * ry, X * ux + Y * uy
+            if abs(fa - rc) >= 10:
+                lim = math.tan(math.radians(25))
+                k_f = max(-lim, min(lim, (fq - q_rc) / (fa - rc)))
+                right, fin_mark_a = fa > rc, fa
     qs = lambda a: q_rc + k_s * (a - rc)
     qf = lambda a: q_rc + k_f * (a - rc)
     starts, fins, a_s, a_f = times(qs, qf)
     d = 1 if right else -1
     fin_len = max(20.0, (max(a_f) - rc if right else rc - min(a_f)) + 15)
+    if fin_mark_a is not None:
+        fin_len = max(15.0, abs(fin_mark_a - rc))
     st_len = max(1.5 * fin_len, 45.0, (rc - min(a_s) if right else max(a_s) - rc) + 20)
     pin, fmark = rc - d * st_len, rc + d * fin_len
 
