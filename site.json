@@ -1,5 +1,13 @@
 {
   "title": "Frostbite Replays",
   "club": "Melges 15 fleet",
-  "timezone": "America/New_York"
+  "timezone": "America/New_York",
+  "series": [
+    {"name": "Frostbite Series · Part 1", "start": "2026-11-07", "end": null, "discards": 0},
+    {"name": "Frostbite Series · Part 2", "start": null, "end": null, "discards": 0}
+  ],
+  "labels": {
+    "2026-03-22": "Test race"
+  },
+  "results_note": "Preliminary results from the uploaded Atlas data. Subject to change after the weekly results email."
 }

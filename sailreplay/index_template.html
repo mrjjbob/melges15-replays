@@ -45,6 +45,8 @@ a.day:hover { border-color: var(--muted); background: var(--water-2); }
 .date .dow { font: 600 13px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .date .dm { font: 700 34px/1 var(--f-display); font-variant-numeric: tabular-nums; }
 .date .yr { font: 500 12px/1.4 var(--f-data); color: var(--muted); }
+.date.named .dm { font-size: 26px; line-height: 0.95; color: var(--accent); text-wrap: balance; }
+.date.named .yr { margin-top: 4px; }
 .info { min-width: 0; display: grid; gap: 6px; }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 500 14px/1.3 var(--f-data); font-variant-numeric: tabular-nums; }
 .facts b { font: 600 15px/1 var(--f-display); letter-spacing: .02em; color: var(--accent); }
@@ -149,10 +151,11 @@ function renderDay(list, d) {
   const wind = d.wind_kt ? `${d.wind_dir != null ? compass(d.wind_dir) + " " : ""}${d.wind_kt[0] === d.wind_kt[1] ? d.wind_kt[0] : d.wind_kt[0] + "–" + d.wind_kt[1]} kt` : null;
   const tags = [];
   if (d.course_changes) tags.push(`<span class="tag move">Course moved ${d.course_changes}×</span>`);
-  if (d.label) tags.push(`<span class="tag label">${esc(d.label)}</span>`);
   if (d.estimated) tags.push(`<span class="tag">Starts estimated</span>`);
   el.innerHTML = `
-    <div class="date"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="dm">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span><span class="yr">${dt.getFullYear()}</span></div>
+    ${d.label
+      ? `<div class="date named"><span class="dm">${esc(d.label)}</span><span class="yr">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span></div>`
+      : `<div class="date"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="dm">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span><span class="yr">${dt.getFullYear()}</span></div>`}
     <div class="info">
       <div class="facts">${d.races ? `<span><b>${d.races}</b> race${d.races === 1 ? "" : "s"}</span>` : "<span>No races found</span>"}${wind ? `<span>${wind}</span>` : ""}<span>${d.boats.length} boat${d.boats.length === 1 ? "" : "s"}</span></div>
       <div class="boats">${esc(d.boats.join(" · "))}</div>
