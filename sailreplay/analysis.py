@@ -650,11 +650,11 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
             a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
         return st, fi, a_s, a_f
     starts, fins, a_s, a_f = times(flat, flat)
-    right = np.mean(a_f) >= np.mean(a_s)               # finish end lies to the right of the start
-    if right:
-        rc = (max(a_s) + min(a_f)) / 2 if max(a_s) < min(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
-    else:
-        rc = (min(a_s) + max(a_f)) / 2 if min(a_s) > max(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
+    # Looking up the course, the start is always to the left of the committee boat and the finish
+    # to the right. Where boats started and finished agree with that, the committee boat goes
+    # between them; where they do not, it goes between the middles of the two.
+    right = True
+    rc = (max(a_s) + min(a_f)) / 2 if max(a_s) < min(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
     # pass 2: both lines meet at the committee boat; each tilts to fit its own boats
     q_rc = q0 + k_f * (rc - a_ref)
     fin_mark_a = None
@@ -664,7 +664,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
         if fixed_fin is not None:                      # and the finish mark's: that sets the finish line
             X, Y = (fixed_fin[1] - lon0) * mlon, (fixed_fin[0] - lat0) * 111_320
             fa, fq = X * rx + Y * ry, X * ux + Y * uy
-            if abs(fa - rc) >= 10:
+            if fa - rc >= 10:                          # the finish mark is right of the committee boat
                 lim = math.tan(math.radians(25))
                 k_f = max(-lim, min(lim, (fq - q_rc) / (fa - rc)))
                 right, fin_mark_a = fa > rc, fa
