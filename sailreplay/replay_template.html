@@ -75,7 +75,9 @@ canvas#map.drag { cursor: grabbing; }
 .boat .nm i { width: 10px; height: 10px; border-radius: 50%; background: var(--bc); flex: none; }
 .boat .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .boat .gap { font: 500 13px/1 var(--f-data); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
-.boat .stats { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.boat .stats { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.stat .v.fast { color: var(--ok); }
+.stat .v.slow { color: var(--bad); }
 .stat .k { font: 600 10.5px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .stat .v { font: 600 22px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
 .stat .v small { font: 500 12px var(--f-body); color: var(--muted); margin-left: 1px; }
@@ -187,6 +189,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
         <canvas id="map" aria-label="Race map"></canvas>
         <div class="maptools">
           <button class="chip" id="trail" aria-pressed="true">Trail 2 min</button>
+          <button class="chip" id="paceBtn" aria-pressed="true">Pace width</button>
           <button class="chip" id="orient" aria-pressed="true">Wind up</button>
           <button class="chip" id="fit" aria-pressed="false">Fit fleet</button>
           <button class="chip" id="loop" aria-pressed="false">Loop</button>
@@ -301,7 +304,8 @@ if (M.marks && M.marks.length) {
 }
 
 // ---------- state
-const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: 10, follow: null, trail: 120, loop: false,
+const HAS_PACE = boats.some(b => b.track.pace);
+const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: 10, follow: null, trail: 120, loop: false, paceTrail: true,
   view: { cx: 0, cy: 0, scale: 1 }, userMoved: false };
 const SPEEDS = [1, 5, 10, 30, 60];
 const TRAILS = [[30, "Trail 30 s"], [120, "Trail 2 min"], [600, "Trail 10 min"], [Infinity, "Trail full"]];
@@ -340,7 +344,7 @@ function at(b, fi) {
   const lerpA = (a, c) => { if (a == null) return c; if (c == null) return a; let d = ((c - a + 540) % 360) - 180; return (a + d * g + 360) % 360; };
   const L = (a, c) => a == null ? c : c == null ? a : a + (c - a) * g;
   return { x: L(b.x[i], b.x[j]), y: L(b.y[i], b.y[j]), sog: L(t.sog[i], t.sog[j]), cog: lerpA(t.cog[i], t.cog[j]), hdg: lerpA(t.hdg[i], t.hdg[j]),
-    heel: L(t.heel[i], t.heel[j]), twa: t.twa[i], vmg: L(t.vmg[i], t.vmg[j]), mg: L(t.mg[i], t.mg[j]), mode: t.mode[i] };
+    heel: L(t.heel[i], t.heel[j]), twa: t.twa[i], pace: t.pace ? t.pace[i] : null, vmg: L(t.vmg[i], t.vmg[j]), mg: L(t.mg[i], t.mg[j]), mode: t.mode[i] };
 }
 function twdAt(fi) { if (!R.wind.twd) return null; return R.wind.twd[Math.min(R.wind.twd.length - 1, Math.floor(fi / R.wind.every))]; }
 
@@ -390,22 +394,50 @@ function draw() {
   for (const b of boats) {
     ctx.strokeStyle = b.color; ctx.globalAlpha = 0.16; ctx.lineWidth = 1.5; polyline(b, 0, N - 1); ctx.globalAlpha = 1;
   }
-  // trails
+  // trails: width shows pace (% of target speed for the race's average wind) when it is known
   for (const b of boats) {
     const a = state.trail === Infinity ? 0 : Math.max(0, ii - Math.round(state.trail * HZ));
-    const grad = 6;
-    for (let k = 0; k < grad; k++) {
-      const s0 = a + Math.floor((ii - a) * k / grad), s1 = a + Math.floor((ii - a) * (k + 1) / grad);
-      ctx.strokeStyle = b.color; ctx.globalAlpha = 0.25 + 0.75 * (k + 1) / grad; ctx.lineWidth = 2.5; polyline(b, s0, s1 + 1);
+    if (state.paceTrail && b.track.pace) {
+      ctx.strokeStyle = b.color; ctx.lineCap = "round";
+      const step = state.trail === Infinity || state.trail > 600 ? 2 : 1;
+      for (let i = a + step; i <= ii; i += step) {
+        if (!b.ok[i] || !b.ok[i - step]) continue;
+        const pc = b.track.pace[i];
+        ctx.globalAlpha = 0.3 + 0.7 * (i - a) / Math.max(1, ii - a);
+        ctx.lineWidth = paceWidth(pc);
+        ctx.beginPath(); ctx.moveTo(sx(b.x[i - step]), sy(b.y[i - step])); ctx.lineTo(sx(b.x[i]), sy(b.y[i])); ctx.stroke();
+      }
+      ctx.lineCap = "butt";
+    } else {
+      const grad = 6;
+      for (let k = 0; k < grad; k++) {
+        const s0 = a + Math.floor((ii - a) * k / grad), s1 = a + Math.floor((ii - a) * (k + 1) / grad);
+        ctx.strokeStyle = b.color; ctx.globalAlpha = 0.25 + 0.75 * (k + 1) / grad; ctx.lineWidth = 2.5; polyline(b, s0, s1 + 1);
+      }
     }
     ctx.globalAlpha = 1;
   }
+  if (state.paceTrail && HAS_PACE) paceLegend();
   // boats
   boats.forEach((b, k) => {
     const p = at(b, state.i); if (!p) return;
     hull(sx(p.x), sy(p.y), (p.hdg ?? p.cog) - ROT, b.color, k === state.follow);
     ctx.font = "600 14px " + cssv("--f-display"); ctx.fillStyle = C.ink; ctx.strokeStyle = C.water; ctx.lineWidth = 3;
     ctx.strokeText(b.name, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(b.name, sx(p.x) + 12, sy(p.y) - 10);
+  });
+}
+function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(10, 1 + (pc - 60) * 0.11)); }
+function paceLegend() {
+  const x = 18, y = H - 128;
+  ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "left";
+  ctx.fillText("TRAIL WIDTH = PACE", x, y);
+  ctx.font = "500 11px " + cssv("--f-data");
+  ctx.fillText(`% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
+  [[80, "80%"], [100, "100%"], [120, "120%"]].forEach(([pc, t], k) => {
+    const yy = y + 32 + k * 15;
+    ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = paceWidth(pc);
+    ctx.beginPath(); ctx.moveTo(x, yy - 4); ctx.lineTo(x + 34, yy - 4); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineCap = "butt";
+    ctx.fillStyle = C.muted; ctx.fillText(t, x + 44, yy);
   });
 }
 function polyline(b, a, z) {
@@ -461,6 +493,7 @@ const cards = boats.map((b, k) => {
     <div class="stat"><div class="k">VMG</div><div class="v" data-k="vmg">—</div></div>
     <div class="stat"><div class="k">Wind ∠</div><div class="v" data-k="twa">—</div></div>
     <div class="stat"><div class="k">Heel</div><div class="v" data-k="heel">—</div></div>
+    <div class="stat"><div class="k">Pace</div><div class="v" data-k="pace">—</div></div>
   </div>`;
   const tag = document.createElement("span"); tag.className = "mode"; el.querySelector(".gap").before(tag);
   el.querySelector(".stats").style.gridColumn = "1 / -1";
@@ -499,6 +532,8 @@ function updateFleet() {
     c.v.vmg.innerHTML = p && p.vmg != null ? fmtNum(p.vmg) + "<small>kt</small>" : "—";
     c.v.twa.innerHTML = p && p.twa != null ? Math.abs(p.twa) + "°<small>" + (p.twa > 0 ? "S" : "P") + "</small>" : "—";
     c.v.heel.innerHTML = p && p.heel != null ? fmtNum(p.heel, 0) + "°" : "—";
+    c.v.pace.innerHTML = p && p.pace != null ? p.pace + "<small>%</small>" : "—";
+    c.v.pace.className = "v" + (p && p.pace != null ? (p.pace >= 103 ? " fast" : p.pace <= 97 ? " slow" : "") : "");
   });
 }
 
@@ -556,6 +591,8 @@ function refresh() {
 // map tools
 $("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = t[0]; $("trail").textContent = t[1]; draw(); };
 $("fit").onclick = () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); };
+$("paceBtn").hidden = !HAS_PACE;
+$("paceBtn").onclick = () => { state.paceTrail = !state.paceTrail; $("paceBtn").setAttribute("aria-pressed", String(state.paceTrail)); draw(); };
 $("loop").onclick = () => { state.loop = !state.loop; $("loop").setAttribute("aria-pressed", String(state.loop)); };
 $("full").onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (e) {} };
 document.addEventListener("fullscreenchange", () => $("full").setAttribute("aria-pressed", String(!!document.fullscreenElement)), ON);
@@ -642,9 +679,9 @@ function renderDebrief() {
     h += `</tbody></table></div></div>`;
   }
   h += `<div><h2>${esc(M.title)} results</h2>${notes}<p class="note">Wind ${M.twd_global ?? "—"}° (${esc(srcText)}). Speeds in knots, VMG is speed made good toward the wind upwind and away from it downwind. ${boats.length > 1 ? "Green marks the best in the fleet." : ""}${boats[0].summary.heading_offset != null && boats.length === 1 ? ` Upwind the boat tracked ${Math.abs(boats[0].summary.up_leeway ?? 0).toFixed(0)}° below its heading (leeway plus current). The Atlas reads ${Math.abs(boats[0].summary.heading_offset).toFixed(0)}° off the centreline; the replay corrects for it.` : ""}</p>
-  <div class="tbl"><table><thead><tr><th>Boat</th><th>Pos</th><th>Elapsed</th><th>Sailed</th><th>Avg speed</th><th>Upwind VMG</th><th>Upwind speed</th><th>Tack angle</th><th>Downwind VMG</th><th>Downwind speed</th><th>Tacks</th><th>Tack loss</th><th>Gybes</th><th>Gybe loss</th></tr></thead><tbody>`;
+  <div class="tbl"><table><thead><tr><th>Boat</th><th>Pos</th><th>Elapsed</th><th>Sailed</th><th>Avg speed</th><th>Upwind VMG</th><th>Upwind speed</th><th>Tack angle</th><th>Downwind VMG</th><th>Downwind speed</th><th>Upwind pace</th><th>Downwind pace</th><th>Tacks</th><th>Tack loss</th><th>Gybes</th><th>Gybe loss</th></tr></thead><tbody>`;
   for (const b of byPos) { const s = b.summary;
-    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
+    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}${cell(s.up_pace, "up_pace", 0, true, "%")}${cell(s.down_pace, "down_pace", 0, true, "%")}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
   h += `</tbody></table></div></div>`;
 
   const WS = R.wind.speed || {};
@@ -675,6 +712,12 @@ function renderDebrief() {
     h += `</tbody></table></div></div>`;
   }
 
+  if (R.sides && (R.sides.up || R.sides.down)) {
+    const row = (lbl, arr) => { if (!arr) return ""; const best = Math.max(...arr.map(x => x.pace ?? -1)), worst = Math.min(...arr.map(x => x.pace ?? 999));
+      return `<tr><td>${lbl}</td>${arr.map(x => `<td class="${x.pace === best && best - worst >= 4 ? "best" : x.pace === worst && best - worst >= 4 ? "flag" : ""}">${x.pace != null ? x.pace + "%" : "—"}</td>`).join("")}</tr>`; };
+    h += `<div><h2>Which side paid</h2><p class="note">Pace is boat speed as a percentage of Melges 15 target speed in the race's average wind (${R.sides.tws_ref} kt), at the angle being sailed. Each part of the course, looking upwind, holds a third of ${boats.length > 1 ? "the fleet's" : "the boat's"} time on that point of sail. Over 100% means more breeze there, or sailing fast; under means a lull. A gap of 5% or more between sides is worth talking about.</p>
+    <div class="tbl"><table><thead><tr><th></th><th>Left</th><th>Middle</th><th>Right</th></tr></thead><tbody>${row("Upwind", R.sides.up)}${row("Downwind", R.sides.down)}</tbody></table></div></div>`;
+  }
   h += `<div class="charts">
     <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward. Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
@@ -700,8 +743,8 @@ function renderMan() {
   }
   h += `</tbody></table>`;
   $("manTbl").innerHTML = h;
-  let l = `<table><thead><tr><th>Leg</th><th>Started</th><th>Duration</th><th>Sailed</th><th>Avg speed</th><th>Avg VMG</th><th>Wind angle</th><th>Heel</th><th>Est. wind</th><th>Tacks/gybes</th></tr></thead><tbody>`;
-  b.legs.forEach((g, k) => { l += `<tr class="jump" data-t="${g.start}"><td>${k + 1}. ${g.type}</td><td>${fmtClock(g.start - (GUN ?? 0))}</td><td>${fmtClock(g.duration_s)}</td><td>${g.distance_m} m</td><td>${fmtNum(g.avg_sog, 2)} kt</td><td>${fmtNum(g.avg_vmg, 2)} kt</td><td>${g.avg_twa}°</td><td>${fmtNum(g.avg_heel)}°</td><td>${g.tws != null ? `${Math.round(g.tws)} kt <span style="color:var(--muted)">(${Math.round(g.tws_lo)}–${Math.round(g.tws_hi)})</span>` : "—"}</td><td>${g.manoeuvres}</td></tr>`; });
+  let l = `<table><thead><tr><th>Leg</th><th>Started</th><th>Duration</th><th>Sailed</th><th>Avg speed</th><th>Avg VMG</th><th>Wind angle</th><th>Heel</th><th>Pace</th><th>Est. wind</th><th>Tacks/gybes</th></tr></thead><tbody>`;
+  b.legs.forEach((g, k) => { l += `<tr class="jump" data-t="${g.start}"><td>${k + 1}. ${g.type}</td><td>${fmtClock(g.start - (GUN ?? 0))}</td><td>${fmtClock(g.duration_s)}</td><td>${g.distance_m} m</td><td>${fmtNum(g.avg_sog, 2)} kt</td><td>${fmtNum(g.avg_vmg, 2)} kt</td><td>${g.avg_twa}°</td><td>${fmtNum(g.avg_heel)}°</td><td class="${g.pace >= 103 ? "best" : g.pace != null && g.pace <= 97 ? "flag" : ""}">${g.pace != null ? g.pace + "%" : "—"}</td><td>${g.tws != null ? `${Math.round(g.tws)} kt <span style="color:var(--muted)">(${Math.round(g.tws_lo)}–${Math.round(g.tws_hi)})</span>` : "—"}</td><td>${g.manoeuvres}</td></tr>`; });
   $("legTbl").innerHTML = l + `</tbody></table>`;
   document.querySelectorAll("#manTbl tr.jump, #legTbl tr.jump").forEach(tr => tr.onclick = () => jump(+tr.dataset.t));
 }

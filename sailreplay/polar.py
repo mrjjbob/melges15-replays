@@ -84,3 +84,10 @@ def describe(lo: float, mid: float, hi: float) -> str:
     if mid < 15:
         return "fresh"
     return "heavy"
+
+
+def target_speeds(tws: float, twa) -> np.ndarray:
+    """Target boat speed (kt) for one wind speed across an array of wind angles."""
+    twa = np.clip(np.abs(np.asarray(twa, float)), TWA[0], 180.0)
+    row = np.array([np.interp(tws, TWS, POLAR[:, j]) for j in range(len(TWA))])
+    return np.interp(twa, TWA, row)

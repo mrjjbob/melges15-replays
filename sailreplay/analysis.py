@@ -575,7 +575,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
 
     # fleet wind speed estimate and the race-average wind direction
     tws_all = np.vstack([b.pop("_tws") for b in out_boats])
-    racing_any = np.any(np.vstack([b.pop("_racing") for b in out_boats]), axis=0)
+    racing_each = [b.pop("_racing") for b in out_boats]
+    racing_any = np.any(np.vstack(racing_each), axis=0)
     with np.errstate(all="ignore"):
         import warnings
         with warnings.catch_warnings():
@@ -594,6 +595,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     if twd_series is not None:
         sel = racing_any if racing_any.any() else np.ones(n, bool)
         twd_avg = circ_mean(twd_series[sel])
+    sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0)
     if line is not None:
         line = {"pin": line["pin"], "boat": line["boat"],
                 "length_m": _r(math.dist(line["pin_xy"], line["boat_xy"]), 0)}
@@ -618,6 +620,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
         "line": line,
         "wind": {"every": wind_every, "twd": _r(twd_series[::wind_every], 0) if twd_series is not None else None,
                  "twd_avg": _r(twd_avg, 0), "tws": _r(tws_smooth[::wind_every], 1), "speed": wind_speed},
+        "sides": sides,
         "boats": out_boats,
     }
 
@@ -969,6 +972,47 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         "_tws": tws_est, "_racing": racing,
     })
     return res
+
+
+def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0):
+    """Pace: boat speed as a % of Melges 15 target speed for the race's average wind, at the angle
+    being sailed. Without a wind sensor the reference has to be one wind speed for the whole race;
+    a boat in more breeze, or sailing well, reads over 100%, and one in a lull reads under.
+    Adds track["pace"], leg and summary averages, and returns pace by side of the course."""
+    if not tws_ref or twd_avg is None:
+        return None
+    T = math.radians(twd_avg)
+    rx, ry = math.cos(T), -math.sin(T)                   # to the right, looking upwind
+    mlon = 111_320 * math.cos(math.radians(lat0))
+    pool = {"up": ([], []), "down": ([], [])}
+    for b, racing in zip(boats, racing_each):
+        tr = b["track"]
+        f = lambda k: np.array([np.nan if v is None else v for v in tr[k]], float)
+        sog, twa = _nan_movmean(f("sog"), int(6 * hz)), f("twa")
+        # an asymmetric boat doesn't sail deeper than ~150 deg; deeper readings are mid-gybe or wind error
+        tgt = polar.target_speeds(tws_ref, np.clip(np.abs(np.nan_to_num(twa, nan=90.0)), 40, 150))
+        pace = np.where(racing & (sog > 0.8) & np.isfinite(twa), sog / tgt * 100, np.nan)
+        tr["pace"] = _r(pace, 0)
+        mode = np.array(tr["mode"], dtype=object)
+        for leg in b["legs"]:
+            sl = slice(int(leg["start"] * hz), int(leg["end"] * hz))
+            leg["pace"] = _r(np.nanmean(pace[sl]), 0) if np.isfinite(pace[sl]).any() else None
+        for key, m in (("up", "up"), ("down", "down")):
+            sel = (mode == m) & np.isfinite(pace)
+            b["summary"][f"{key}_pace"] = _r(np.nanmean(pace[sel]), 0) if sel.sum() > 20 else None
+            a = (f("lon")[sel] - lon0) * mlon * rx + (f("lat")[sel] - lat0) * 111_320 * ry
+            pool[key][0].extend(a.tolist())
+            pool[key][1].extend(pace[sel].tolist())
+    out = {"tws_ref": _r(tws_ref, 1)}
+    for key, (a, p) in pool.items():
+        a, p = np.array(a), np.array(p)
+        if len(a) < 60:
+            out[key] = None
+            continue
+        lo, hi = np.percentile(a, [33.3, 66.7])
+        parts = [("Left", a < lo), ("Middle", (a >= lo) & (a <= hi)), ("Right", a > hi)]
+        out[key] = [{"side": n, "pace": _r(np.nanmean(p[m]), 0), "n": int(m.sum())} for n, m in parts]
+    return out
 
 
 def _tws_range(est):

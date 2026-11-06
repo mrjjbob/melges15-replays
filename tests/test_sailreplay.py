@@ -316,3 +316,15 @@ def test_fleet_matching():
     assert resolve_boat(P("302.vkx"), {}, fleet) == "302 Rubel"
     assert resolve_boat(P("Glackin.vkx"), {}, fleet) == "270 Simkins"
     assert resolve_boat(P("New_Sailor_s_Vakaros_11-8-2026.vkx"), {}, fleet) == "New Sailor"
+
+
+def test_pace(race):
+    from sailreplay import polar
+    import numpy as np
+    assert abs(polar.target_speeds(6, [45])[0] - polar.speed(6, 45)) < 1e-9
+    assert race["sides"]["tws_ref"] and race["sides"]["up"] and len(race["sides"]["up"]) == 3
+    for b in race["boats"]:
+        p = np.array([x for x in b["track"]["pace"] if x is not None], float)
+        assert 70 < np.median(p) < 130                       # the fleet sails near its own average
+        assert b["summary"]["up_pace"] and b["summary"]["down_pace"]
+        assert all("pace" in leg for leg in b["legs"])
