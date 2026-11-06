@@ -28,9 +28,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 header { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 26px; row-gap: 6px; align-items: center; margin-bottom: 32px; }
 header .logo { grid-row: 1 / span 5; width: clamp(120px, 18vw, 200px); height: auto; }
 header > :not(.logo) { grid-column: 2; }
-.mailbar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 10px 14px; border-radius: 12px; background: rgba(242,179,61,.1); border: 1px solid #6b5224; justify-self: start; text-decoration: none; }
-.mailbar span { color: var(--muted); font-size: 14.5px; }
-.mailbar b { font: 700 19px/1.1 var(--f-display); letter-spacing: .02em; color: var(--accent); word-break: break-all; }
 .mailcard { display: grid; gap: 8px; background: rgba(242,179,61,.1); border: 1px solid #6b5224; border-radius: 12px; padding: 14px; }
 .mailcard .k { font: 600 12.5px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
 .mailcard a.addr { font: 700 22px/1.15 var(--f-display); letter-spacing: .01em; color: var(--ink); text-decoration: none; word-break: break-all; }
@@ -94,7 +91,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
   .add { position: static; }
   header { column-gap: 16px; }
   header .logo { grid-row: 1 / span 2; width: 92px; }
-  header > .meta, header > .hlinks, header > .mailbar { grid-column: 1 / -1; }
+  header > .meta, header > .hlinks { grid-column: 1 / -1; }
   .day { grid-template-columns: 74px minmax(0, 1fr); }
   .day .go { display: none; }
   .date .dm { font-size: 28px; }
@@ -109,7 +106,6 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     <h1 id="title"></h1>
     <span class="meta" id="meta"></span>
     <div class="hlinks"><a class="results-link" href="results.html">Preliminary results →</a><span id="links"></span></div>
-    <a class="mailbar" id="mailbar" href="#add" hidden><span>Add your race: email your .vkx to</span><b class="em"></b></a>
   </header>
   <div class="grid">
     <section>
@@ -205,7 +201,6 @@ if (S.upload_email) {
   $("steps-mail").hidden = false; $("steps-gh").hidden = true;
   const mt = "mailto:" + S.upload_email + "?subject=Sail%20number%3A%20";
   $("mailcard").hidden = false; $("addr").textContent = S.upload_email; $("addr").href = mt; $("mailbtn").href = mt;
-  $("mailbar").hidden = false; $("mailbar").querySelector(".em").textContent = S.upload_email;
   $("copy").onclick = async () => { try { await navigator.clipboard.writeText(S.upload_email); $("copy").textContent = "Copied"; } catch (e) { $("copy").textContent = S.upload_email; } setTimeout(() => $("copy").textContent = "Copy address", 2000); };
   $("upload").textContent = "Or upload on a web page";
   $("acct").textContent = "No account needed.";
