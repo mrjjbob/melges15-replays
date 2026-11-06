@@ -62,7 +62,11 @@ canvas#map.drag { cursor: grabbing; }
 .windbox .v { font: 700 26px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--accent); }
 .windbox .src { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; max-width: 30ch; line-height: 1.35; }
 .windbox .tide { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 7px; margin-top: 2px; font-size: 12.5px; line-height: 1.35; color: var(--muted); max-width: 30ch; }
-.windbox .tide b { font: 700 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); margin-right: 4px; }
+.windbox .tide { display: flex; align-items: center; gap: 10px; }
+.windbox .tide b { font: 700 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+.windbox .tide .bars { display: inline-flex; align-items: flex-end; gap: 3px; }
+.windbox .tide .bars i { width: 5px; border-radius: 1px; background: var(--rule); }
+.windbox .tide .bars i.on { background: #6fb7d9; }
 .windbox .src b { color: var(--ink); font-weight: 600; }
 .maptools { position: absolute; left: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { background: rgba(9,22,32,.82); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 11px; font: 600 13px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
@@ -146,7 +150,6 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   .windbox { top: auto; bottom: 46px; right: 10px; padding: 8px 10px; }
   .windbox .src { display: none; }
   .windbox .tide { padding-top: 5px; font-size: 11.5px; }
-  .windbox .tide .nx { display: none; }
   .windbox .tide b { font-size: 13px; }
   .windbox .v { font-size: 22px; }
   .maptools { right: 10px; }
@@ -506,11 +509,10 @@ function drawWind() {
 }
 function tideRow() {
   if (!TIDE) return "";
-  const t0 = M.gun_ms ?? M.t0_ms, t1 = M.t0_ms + N / HZ * 1000, a = tideAt(t0), z = tideAt(t1);
+  const a = tideAt(M.gun_ms ?? M.t0_ms), z = tideAt(M.t0_ms + N / HZ * 1000);
   if (!a) return "";
   const turned = z && z.ebb !== a.ebb;
-  const evs = TIDE.events.filter(e => e.t_ms > t0 - 6.5 * 3600e3 && e.t_ms < t1 + 6.5 * 3600e3).map(e => `${e.type === "H" ? "high" : "low"} ${fmtLocal(e.t_ms)} (${e.ft.toFixed(1)} ft)`).join(", ");
-  return `<tr><td>Tide</td><td>${turned ? tideWords(a) + " → " + tideWords(z) : tideWords(a) + (a.ebb ? ", going out" : ", coming in")}</td><td>${turned ? `turned during the race · ` : `${a.strength} at the start · `}${evs}</td></tr>`;
+  return `<tr><td>Tide</td><td>${tideWords(a)}${turned ? " → " + tideWords(z) : ""}</td><td>${turned ? "turned during the race" : a.word}</td></tr>`;
 }
 // tide: between high and low water it ebbs (goes out), between low and high it floods (comes in)
 const TIDE = M.tide;
@@ -520,15 +522,16 @@ function tideAt(ms) {
   const ev = TIDE.events; let j = ev.findIndex(e => e.t_ms > ms);
   if (j <= 0) return null;
   const a = ev[j - 1], z = ev[j], f = (ms - a.t_ms) / (z.t_ms - a.t_ms);
-  const strength = f < 1 / 6 || f > 5 / 6 ? "near slack" : f >= 1 / 3 && f <= 2 / 3 ? "strongest" : f < .5 ? "building" : "easing";
-  return { ebb: a.type === "H", prev: a, next: z, strength };
+  const sn = Math.sin(Math.PI * f), level = sn < 0.5 ? 1 : sn < 0.87 ? 2 : 3;
+  return { ebb: a.type === "H", prev: a, next: z, level, word: ["", "weak", "moderate", "strong"][level] };
 }
-function tideWords(t) { return t.ebb ? "Ebb" : "Flood"; }
+function tideWords(t) { return t.ebb ? "Ebbing" : "Flooding"; }
 function drawTide() {
   const el = $("tide"), t = tideAt(M.t0_ms + state.i / HZ * 1000);
   if (!t) { el.hidden = true; return; }
   el.hidden = false;
-  el.innerHTML = `<b>${t.ebb ? "Ebb" : "Flood"}</b>${t.ebb ? "going out" : "coming in"}, ${t.strength}<span class="nx"><br>${t.next.type === "H" ? "High" : "Low"} water ${fmtLocal(t.next.t_ms)} · NOAA Northport</span>`;
+  const bars = [1, 2, 3].map(k => `<i class="${k <= t.level ? "on" : ""}" style="height:${4 + k * 3}px"></i>`).join("");
+  el.innerHTML = `<b>${t.ebb ? "Ebbing" : "Flooding"} tide</b><span class="bars" title="${t.word}" aria-label="${t.word}">${bars}</span>`;
 }
 const srcText = { manual: "set by hand", tacks: "estimated from the fleet's tacks", "start line": "square to the start line", "atlas tack headings": "from Atlas tack headings", none: "unknown, pass --twd" }[M.twd_source] || "";
 $("orient").textContent = "Wind up"; $("orient").setAttribute("aria-pressed", "true");
@@ -742,7 +745,7 @@ function renderDebrief() {
     const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
     for (const r of DAY.races) {
       const c = r.course || {};
-      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebb, out" : "Flood, in") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebbing" : "Flooding") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
     }
     h += `</tbody></table></div></div>`;
   }
@@ -765,7 +768,7 @@ function renderDebrief() {
     <tr><td>Read from the runs</td><td>${WS.down != null ? "≈ " + Math.round(WS.down) + " kt" : "—"}</td><td>${WS.down != null && WS.down >= 8 ? "planing" : "displacement mode"} downwind</td></tr>
     <tr><td>Direction</td><td>${avg != null ? avg + "°" : "—"}</td><td>${sl != null ? `shifts from ${sl > 0 ? "+" : "−"}${Math.abs(sl)}° to ${sr >= 0 ? "+" : "−"}${Math.abs(sr)}° around the race average` : ""}</td></tr>
     ${tideRow()}
-    </tbody></table></div>${TIDE ? `<p class="note">Tide from NOAA predictions for ${esc(TIDE.station_name)} (station ${TIDE.station}). It ebbs (goes out) from high water to low and floods (comes in) from low to high, running hardest mid-tide. Currents in the harbor can turn a little after the predicted high or low.</p>` : ""}</div>`;
+    </tbody></table></div></div>`;
   }
   if (GUN != null && !R.line) {
     h += `<div><h2>Start</h2><p class="note">${M.start_estimated ? "No race timer was used, so the start is when boats crossed the estimated line (square to the wind, through where the fleet started and finished). Treat it as within a few seconds." : ""} Pace before the gun is speed against close-hauled target speed for the race's wind, so a good start builds to about 100% at the gun. Nobody pinged the start line, so distance to the line and line position are not available. Ping both ends on the Atlas next time to get them.</p>

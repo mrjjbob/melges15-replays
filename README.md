@@ -45,7 +45,7 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 
 ### Tide and shoreline
 
-Each race shows which way the tide is running (flood = coming in, ebb = going out), how strong it is and the next high or low, from NOAA predictions for Northport, Northport Bay (station 8515586). Predictions for March 2026 and September 2026 to May 2027 are stored in `sailreplay/tides_8515586.json`, so nothing needs to be online. For any other date the build fetches them from NOAA automatically. The faint shoreline on the map is OpenStreetMap coastline, stored in `sailreplay/coast_northport.json`. Boats turn grey once they finish.
+Each race shows whether the tide is flooding (coming in) or ebbing (going out), with bars for how strong it is, from NOAA predictions for Northport, Northport Bay (station 8515586). Predictions for March 2026 and September 2026 to May 2027 are stored in `sailreplay/tides_8515586.json`, so nothing needs to be online. For any other date the build fetches them from NOAA automatically. The faint shoreline on the map is OpenStreetMap coastline, stored in `sailreplay/coast_northport.json`. Boats turn grey once they finish.
 
 ## Run it locally
 
