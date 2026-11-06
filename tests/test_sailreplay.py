@@ -451,3 +451,15 @@ def test_real_atlas_log_from_denmark():
     assert r["meta"]["tide"] is None and r["meta"]["coast"] is None
     assert r["boats"][0]["penalties"] == []                      # behind the line at the gun, not OCS
     assert any(m["kind"] == "rounding" for m in r["boats"][0]["manoeuvres"])
+
+
+def test_late_unsynced_timer_does_not_make_a_second_race():
+    from types import SimpleNamespace
+    G = 1_800_000_000_000
+    synced = SimpleNamespace(timer=[{"t": G - 300_000, "event": "start", "value_s": 300},
+                                    {"t": G - 240_000, "event": "sync", "value_s": 240},
+                                    {"t": G, "event": "race_start", "value_s": 0}])
+    late = SimpleNamespace(timer=[{"t": G - 260_000, "event": "start", "value_s": 300},   # started 40 s late
+                                  {"t": G + 40_000, "event": "race_start", "value_s": 0}])
+    assert analysis.find_guns([synced, late]) == [G]
+    assert analysis.find_guns([late]) == [G + 40_000]
