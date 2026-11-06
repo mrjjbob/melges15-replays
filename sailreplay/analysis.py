@@ -274,8 +274,11 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
                 continue
             j = L[1] + int(np.argmax(seg) if L[0] == 1 else np.argmin(seg))
             if L is not c[-1]:
-                marks.append({"kind": "windward" if L[0] == 1 else "leeward",
-                              "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j])})
+                mk = {"kind": "windward" if L[0] == 1 else "leeward",
+                      "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j])}
+                if L[0] == -1:
+                    mk["rounded"] = _rounding_side(s.cog, j, hz)
+                marks.append(mk)
         course, wing = _course_letter(c, s, p, hz, wrap180(twd - cs))
         if wing is not None:
             marks.append({"kind": "wing", "lat": float(s.lat[wing]), "lon": float(s.lon[wing]), "t": int(grid[wing])})
@@ -285,6 +288,25 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
                     "legs": ["up" if L[0] == 1 else "down" for L in c], "course": course,
                     "marks": marks, "twd": float(circ_mean(twd[a:b]))})
     return out
+
+
+def _rounding_side(cog, j, hz) -> str | None:
+    """Which way a boat turned round the leeward mark. Marks are left to port, so the turn up
+    is anticlockwise; a clockwise (starboard) rounding means there was a gate and this boat took
+    the other side. Measured as the biggest one-way turn within the rounding, so a gybe on the way
+    in or a tack straight after does not count."""
+    a, b = max(1, j - int(20 * hz)), min(len(cog), j + int(12 * hz))
+    seg = cog[a - 1:b]
+    if np.sum(np.isfinite(seg)) < len(seg) * 0.7:
+        return None
+    d = np.nan_to_num(wrap180(np.diff(seg)))
+    d = np.where(np.abs(d) > 45, 0, d)               # GPS glitches, not turns
+    c = np.concatenate([[0], np.cumsum(d)])
+    cw = float(np.max(c - np.minimum.accumulate(c)))     # biggest clockwise run
+    ccw = float(np.max(np.maximum.accumulate(c) - c))    # biggest anticlockwise run
+    if max(cw, ccw) < 90:
+        return None
+    return "starboard" if cw > ccw else "port"
 
 
 # CYC Frostbite Sailing Instructions, section 7: course letters by the legs sailed.
@@ -358,8 +380,19 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
         marks = []
         for k, m in enumerate(best["marks"]):
             pts = [c["marks"][k] for c in chains if len(c["marks"]) > k and c["marks"][k]["kind"] == m["kind"]]
-            marks.append({"kind": m["kind"], "lat": float(np.mean([q["lat"] for q in pts])),
-                          "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts)})
+            mk = {"kind": m["kind"], "lat": float(np.mean([q["lat"] for q in pts])),
+                  "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts)}
+            # Leeward gate: anyone rounding to starboard means two marks. Place each by the
+            # boats that rounded it; the leeward mark itself stays at the middle of the gate.
+            if m["kind"] == "leeward" and any(q.get("rounded") == "starboard" for q in pts):
+                mk["gate"] = []
+                for side in ("port", "starboard"):
+                    g = [q for q in pts if q.get("rounded") == side]
+                    if g:
+                        mk["gate"].append({"rounded": side, "lat": float(np.mean([q["lat"] for q in g])),
+                                           "lon": float(np.mean([q["lon"] for q in g])), "boats": len(g)})
+                r["gate"] = True
+            marks.append(mk)
         r["marks"] = marks
         if r["marks"]:
             _fit_line(r, boats)
@@ -615,7 +648,10 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
             "start_estimated": bool(race and race.get("estimated")),
             "course": (race or {}).get("course"),
             "course_letter": (race or {}).get("course_letter", ""),
-            "marks": [{"kind": m["kind"], "lat": _r(m["lat"], 6), "lon": _r(m["lon"], 6)} for m in (race or {}).get("marks", [])],
+            "marks": [{"kind": m["kind"], "lat": _r(m["lat"], 6), "lon": _r(m["lon"], 6),
+                       **({"gate": [{"rounded": g["rounded"], "lat": _r(g["lat"], 6), "lon": _r(g["lon"], 6)} for g in m["gate"]]}
+                          if m.get("gate") else {})} for m in (race or {}).get("marks", [])],
+            "gate": bool((race or {}).get("gate")),
             "line_est": (race or {}).get("line_est") if line is None else None,
             "tide": local.tide_summary(int(gun_ms if gun_ms is not None else t0), int(t0 + n * 1000 / hz)),
             "coast": local.coastline_near(lat0, lon0),
@@ -1293,7 +1329,7 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
         s = win["summary"]
         rows.append({
             "race": k, "start_ms": r["start_ms"], "estimated": r.get("estimated", False),
-            "course_letter": r.get("course_letter", ""),
+            "course_letter": r.get("course_letter", ""), "gate": bool(r.get("gate")),
             "elapsed_s": s["elapsed_s"], "winner": win["name"], "boats": len(bs),
             "twd": rr["wind"].get("twd_avg") if rr["wind"].get("twd_avg") is not None else rr["meta"]["twd_global"],
             "course": r.get("course") or {},

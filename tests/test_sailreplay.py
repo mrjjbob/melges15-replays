@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import struct
 import sys
 from pathlib import Path
@@ -340,3 +341,31 @@ def test_tide_and_coast_for_northport():
     c = local.coastline_near(40.914, -73.363)
     assert c and len(c["lines"]) >= 1
     assert local.coastline_near(41.5, -71.3) is None   # outside the bundled area
+
+
+def test_leeward_rounding_side_and_gate(tmp_path, monkeypatch):
+    hz = 2
+    def turn(a, b, steps):                       # heading a -> b over steps, the short way given by sign
+        return list(np.linspace(a, b, steps) % 360)
+    run, beat = [180.0] * 40, [45.0] * 30
+    port = np.array(run + turn(180, 45, 12) + beat)            # anticlockwise up: normal port rounding
+    stbd = np.array(run + turn(180, 315, 12) + beat[:0] + [315.0] * 30)
+    gybe_then_port = np.array([215.0] * 25 + turn(215, 145, 6) + [145.0] * 9 + turn(145, 30, 12) + turn(30, 110, 8) + [110.0] * 22)
+    assert analysis._rounding_side(port, 46, hz) == "port"
+    assert analysis._rounding_side(stbd, 46, hz) == "starboard"
+    assert analysis._rounding_side(gybe_then_port, 40, hz) == "port"   # gybe in, tack out: still a port rounding
+    assert analysis._rounding_side(np.array(run * 3), 60, hz) is None
+
+    import make_demo_race
+    make_demo_race.simulate(tmp_path, timers=False, course="W")
+    boats = [(p.stem, vkx.parse_file(p)) for p in sorted(tmp_path.glob("*.vkx"))]
+    assert not analysis.find_races(boats)[0].get("gate")
+    # one boat takes the other side of the gate
+    real, calls = analysis._rounding_side, []
+    def fake(cog, j, hz):
+        calls.append(1)
+        return "starboard" if len(calls) == 1 else real(cog, j, hz)
+    monkeypatch.setattr(analysis, "_rounding_side", fake)
+    r = analysis.find_races(boats)[0]
+    lw = next(m for m in r["marks"] if m["kind"] == "leeward")
+    assert r["gate"] and {g["rounded"] for g in lw["gate"]} == {"port", "starboard"}

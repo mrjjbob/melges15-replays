@@ -43,6 +43,10 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
+### Leeward gate
+
+Leeward marks are left to port, so boats round up anticlockwise. If anyone rounds the leeward mark the other way (a starboard rounding), the race is treated as having a gate: the replay shows two gate marks, placed where each group of boats rounded, and the day table marks the course "gate".
+
 ### Tide and shoreline
 
 Each race shows whether the tide is flooding (coming in) or ebbing (going out), with bars for how strong it is, from NOAA predictions for Northport, Northport Bay (station 8515586). Predictions for March 2026 and September 2026 to May 2027 are stored in `sailreplay/tides_8515586.json`, so nothing needs to be online. For any other date the build fetches them from NOAA automatically. The faint shoreline on the map is OpenStreetMap coastline, stored in `sailreplay/coast_northport.json`. Boats turn grey once they finish.

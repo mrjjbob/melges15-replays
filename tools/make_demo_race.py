@@ -128,7 +128,9 @@ class Boat:
                 return twd - 100, 2.5
             kind, mark = self.course[self.leg]
             dx, dy = mark[0] - self.x, mark[1] - self.y
-            self._turn_to(1 if kind in "WU" else self.side, t, force=True)
+            # leeward marks are left to port: round up anticlockwise onto port tack
+            up_side = -1 if self.leg > 0 and self.course[self.leg - 1][0] == "L" else 1
+            self._turn_to(up_side if kind in "WU" else self.side, t, force=True)
         b = math.degrees(math.atan2(dx, dy)) % 360
         mean = TWD0 + 0.004 * max(0, t)
         dist = math.hypot(dx, dy)

@@ -234,7 +234,7 @@ const DAY = DATA.day || null;
 const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
 let ctl = null, cur = null;
 // settings that carry from race to race (cycling rebuilds the page for each race)
-const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false };
+const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false, orient: "wind" };
 function parseHash() {
   const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
@@ -243,10 +243,17 @@ function parseHash() {
 function route() {
   const { k, view } = parseHash();
   if (cur && cur.k === k) { cur.api.show(view); return; }
+  // switching races inside the debrief keeps your place, so one chart can be compared race to race
+  const deb = document.querySelector(".debrief");
+  const keep = view === "debrief" && deb && !deb.hidden ? { win: window.scrollY, el: deb.scrollTop } : null;
   if (ctl) ctl.abort();
   APP.innerHTML = APP_HTML;
   ctl = new AbortController();
   cur = { k, api: run(RACES[k], k, ctl.signal, view) };
+  if (keep) {
+    const put = () => { window.scrollTo(0, keep.win); const d = document.querySelector(".debrief"); if (d) d.scrollTop = keep.el; };
+    put(); requestAnimationFrame(put);
+  }
 }
 window.addEventListener("hashchange", route);
 route();
@@ -304,6 +311,11 @@ if (M.marks && M.marks.length) {
   const seen = {};
   for (const m of M.marks) { const [x, y] = toXY(m.lat, m.lon); const label = { windward: "Windward mark", leeward: "Leeward mark", start: "Start (est.)", finish: "Finish (est.)" }[m.kind] || m.kind;
     if (lineEst && (m.kind === "start" || m.kind === "finish")) continue;
+    if (m.gate) {   // leeward gate: one buoy per side, found from which way boats rounded
+      for (const g of m.gate) { const [gx, gy] = toXY(g.lat, g.lon);
+        if (!marks.some(c => c.gate && Math.hypot(c.x - gx, c.y - gy) < 25)) marks.push({ x: gx, y: gy, label: "Gate mark", gate: true }); }
+      continue;
+    }
     if (marks.some(c => c.label === label && Math.hypot(c.x - x, c.y - y) < 40)) continue; marks.push({ x, y, label }); }
 } else {
   const groups = {};
@@ -535,9 +547,23 @@ function drawTide() {
   el.innerHTML = `<b>${t.ebb ? "Ebbing" : "Flooding"} tide</b><span class="bars" title="${t.word}" aria-label="${t.word}">${bars}</span>`;
 }
 const srcText = { manual: "set by hand", tacks: "estimated from the fleet's tacks", "start line": "square to the start line", "atlas tack headings": "from Atlas tack headings", none: "unknown, pass --twd" }[M.twd_source] || "";
-$("orient").textContent = "Wind up"; $("orient").setAttribute("aria-pressed", "true");
-$("orient").onclick = () => { const up = ROT === 0; applyRot(up ? WIND_UP : 0); $("orient").textContent = up ? "Wind up" : "North up"; $("orient").setAttribute("aria-pressed", String(up)); state.userMoved = false; fitAll(); refresh(); };
-if (M.twd_global == null) $("orient").hidden = true;
+// Course up: the leeward mark (middle of the gate) at the bottom, the windward mark at the top
+const COURSE_UP = (() => {
+  const w = (M.marks || []).find(m => m.kind === "windward"), l = (M.marks || []).find(m => m.kind === "leeward");
+  if (!w || !l) return null;
+  const a = toXY(w.lat, w.lon), b = toXY(l.lat, l.lon);
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) < 100 ? null : (Math.atan2(a[0] - b[0], a[1] - b[1]) * 180 / Math.PI + 360) % 360;
+})();
+const ORIENTS = [["wind", "Wind up", M.twd_global != null ? WIND_UP : null], ["course", "Course up", COURSE_UP], ["north", "North up", 0]].filter(o => o[2] != null);
+function setOrient(key) {
+  const o = ORIENTS.find(o => o[0] === key) || ORIENTS[0];
+  SESSION.orient = o[0]; applyRot(o[2]);
+  $("orient").textContent = o[1]; $("orient").setAttribute("aria-pressed", String(o[0] !== "north"));
+  $("orient").title = { wind: "Looking up the course into the wind", course: "Windward mark at the top, leeward mark at the bottom", north: "North at the top" }[o[0]];
+}
+setOrient(SESSION.orient);
+$("orient").onclick = () => { const j = ORIENTS.findIndex(o => o[0] === SESSION.orient); setOrient(ORIENTS[(j + 1) % ORIENTS.length][0]); state.userMoved = false; fitAll(); refresh(); };
+if (ORIENTS.length < 2) $("orient").hidden = true;
 
 // ---------- fleet cards
 const fleet = $("fleet");
@@ -746,7 +772,7 @@ function renderDebrief() {
     const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
     for (const r of DAY.races) {
       const c = r.course || {};
-      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebbing" : "Flooding") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebbing" : "Flooding") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}${r.gate ? ` <span style="color:var(--muted)">gate</span>` : ""}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
     }
     h += `</tbody></table></div></div>`;
   }
@@ -792,7 +818,7 @@ function renderDebrief() {
     <div class="tbl"><table><thead><tr><th></th><th>Left</th><th>Middle</th><th>Right</th></tr></thead><tbody>${row("Upwind", R.sides.up)}${row("Downwind", R.sides.down)}</tbody></table></div></div>`;
   }
   h += `<div class="charts">
-    <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+    <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Dashed lines are mark roundings, filled dots tacks and open dots gybes. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward. Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard wide"><h3>Sailing the shifts</h3><p class="note">Share of the time each boat was on the tack or gybe the current shift favours. Upwind that is the lifted tack: starboard when the wind has gone right of the race average (${R.wind.twd_avg ?? "—"}°), port when it has gone left. Downwind it is the gybe pointing closer to the leeward mark, the opposite one. Only time with the wind ${3}° or more off the average counts; 50% is what you'd get by chance. Shifts are estimated from the fleet's tacks${boats.length === 1 ? ", so with one boat they are rough" : ""}.</p><canvas id="phaseChart"></canvas><div class="legend"><span><i style="background:var(--ink)"></i>Upwind (lifted tack)</span><span><i style="background:var(--muted)"></i>Downwind (favoured gybe)</span><span><i style="background:var(--accent)"></i>50% = chance</span></div></div>
   </div>`;
@@ -855,7 +881,28 @@ function drawSpeedChart() {
     return out; });
   const x1 = raceT(N - 1) / 60;
   const [X, Y] = axes(c, w, h, raceT(a) / 60, x1, 0, Math.ceil(ymax + 0.5), "race minutes", "knots", v => v);
+  const B = 26, T = 10;   // same margins as axes()
+  // mark roundings: a dashed line per boat, labelled once at the first boat round each mark
+  const seen = {};
+  boats.forEach(b => { let nW = 0, nL = 0;
+    for (const m of b.manoeuvres) { if (m.kind !== "rounding") continue;
+      const x = raceT(m.t * HZ) / 60; if (x < raceT(a) / 60 || x > x1) continue;
+      const lw = /leeward/i.test(m.label), key = (lw ? "L" : "W") + (lw ? ++nL : ++nW);
+      c.strokeStyle = b.color; c.globalAlpha = boats.length > 1 ? 0.45 : 0.7; c.lineWidth = 1; c.setLineDash([3, 4]);
+      c.beginPath(); c.moveTo(Math.round(X(x)) + .5, T + 14); c.lineTo(Math.round(X(x)) + .5, h - B); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+      if (!seen[key] || x < seen[key]) seen[key] = x; } });
+  c.font = "600 10.5px " + cssv("--f-display"); c.fillStyle = C.muted; c.textAlign = "center";
+  for (const k in seen) c.fillText(k[0] === "L" ? "LEEWARD" : "WINDWARD", X(seen[k]), T + 9);
+  c.textAlign = "left";
   boats.forEach((b, k) => { c.strokeStyle = b.color; c.lineWidth = 1.8; c.beginPath(); series[k].forEach(([x, y], n) => n ? c.lineTo(X(x), Y(y)) : c.moveTo(X(x), Y(y))); c.stroke(); });
+  // tacks (filled dots) and gybes (open rings), sitting on the boat's speed line
+  const yAt = (sr, x) => { if (!sr.length) return null; let j = sr.findIndex(p => p[0] >= x); if (j < 0) return sr[sr.length - 1][1]; if (j === 0) return sr[0][1];
+    const [xa, ya] = sr[j - 1], [xb, yb] = sr[j]; return ya + (yb - ya) * (x - xa) / Math.max(1e-9, xb - xa); };
+  boats.forEach((b, k) => { for (const m of b.manoeuvres) { if (m.kind !== "tack" && m.kind !== "gybe") continue;
+    const x = raceT(m.t * HZ) / 60, y = yAt(series[k], x); if (y == null || x < raceT(a) / 60 || x > x1) continue;
+    c.beginPath(); c.arc(X(x), Y(y), 3.6, 0, Math.PI * 2);
+    if (m.kind === "tack") { c.fillStyle = b.color; c.fill(); c.lineWidth = 1.2; c.strokeStyle = cssv("--panel-2"); c.stroke(); }
+    else { c.fillStyle = cssv("--panel-2"); c.fill(); c.lineWidth = 1.6; c.strokeStyle = b.color; c.stroke(); } } });
   spdGeom = { X, x0: raceT(a) / 60, x1, w };
   cv.onclick = e => { const r = cv.getBoundingClientRect(); const px = e.clientX - r.left; const L = 44, Rr = 10; const m = spdGeom.x0 + (spdGeom.x1 - spdGeom.x0) * (px - L) / (spdGeom.w - L - Rr); jump(m * 60 + (GUN ?? 0) + 8); };
 }
