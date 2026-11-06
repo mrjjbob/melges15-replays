@@ -1,5 +1,6 @@
 <title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="icon" type="image/png" href="favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -24,7 +25,20 @@ body { background: var(--panel); color: var(--ink); font: 16px/1.5 var(--f-body)
 a { color: inherit; }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .wrap { max-width: 1120px; margin: 0 auto; padding-block: 36px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-header { display: grid; gap: 6px; margin-bottom: 32px; }
+header { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 26px; row-gap: 6px; align-items: center; margin-bottom: 32px; }
+header .logo { grid-row: 1 / span 5; width: clamp(120px, 18vw, 200px); height: auto; }
+header > :not(.logo) { grid-column: 2; }
+.mailbar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 10px 14px; border-radius: 12px; background: rgba(242,179,61,.1); border: 1px solid #6b5224; justify-self: start; text-decoration: none; }
+.mailbar span { color: var(--muted); font-size: 14.5px; }
+.mailbar b { font: 700 19px/1.1 var(--f-display); letter-spacing: .02em; color: var(--accent); word-break: break-all; }
+.mailcard { display: grid; gap: 8px; background: rgba(242,179,61,.1); border: 1px solid #6b5224; border-radius: 12px; padding: 14px; }
+.mailcard .k { font: 600 12.5px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.mailcard a.addr { font: 700 22px/1.15 var(--f-display); letter-spacing: .01em; color: var(--ink); text-decoration: none; word-break: break-all; }
+.mailcard .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.mailcard button, .mailcard .mbtn { font: 700 14px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; border-radius: 8px; padding: 10px 12px; cursor: pointer; text-decoration: none; }
+.mailcard .mbtn { background: var(--accent); color: #1a1205; border: 0; }
+.mailcard button { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
+.mailcard .sub { color: var(--muted); font-size: 13.5px; }
 .eyebrow { font: 600 13px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
 h1 { margin: 0; font: 700 clamp(40px, 7vw, 68px)/0.95 var(--f-display); letter-spacing: .005em; text-wrap: balance; }
 .meta { color: var(--muted); font-size: 15px; }
@@ -78,6 +92,9 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
 @media (max-width: 860px) {
   .grid { grid-template-columns: 1fr; }
   .add { position: static; }
+  header { column-gap: 16px; }
+  header .logo { grid-row: 1 / span 2; width: 92px; }
+  header > .meta, header > .hlinks, header > .mailbar { grid-column: 1 / -1; }
   .day { grid-template-columns: 74px minmax(0, 1fr); }
   .day .go { display: none; }
   .date .dm { font-size: 28px; }
@@ -87,10 +104,12 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
 
 <div class="wrap">
   <header>
+    <img class="logo" src="logo.png" alt="Melges 15">
     <span class="eyebrow" id="club"></span>
     <h1 id="title"></h1>
     <span class="meta" id="meta"></span>
     <div class="hlinks"><a class="results-link" href="results.html">Preliminary results →</a><span id="links"></span></div>
+    <a class="mailbar" id="mailbar" href="#add" hidden><span>Add your race: email your .vkx to</span><b class="em"></b></a>
   </header>
   <div class="grid">
     <section>
@@ -99,9 +118,15 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     </section>
     <aside class="add" id="add">
       <h3>Add your race</h3>
+      <div class="mailcard" id="mailcard" hidden>
+        <span class="k">Email your .vkx file to</span>
+        <a class="addr" id="addr" href="#"></a>
+        <div class="row"><a class="mbtn" id="mailbtn" href="#">Write the email</a><button type="button" id="copy">Copy address</button></div>
+        <span class="sub">Sail number in the subject. You get a reply when it is in.</span>
+      </div>
       <ol id="steps-mail" hidden>
         <li>After sailing, open <b>Vakaros Connect</b> and pick the session.</li>
-        <li>Tap <b>Share</b>, choose the <code>.vkx</code> file and send it with <b>Mail</b> to <a id="mailto" href="#"><b id="email"></b></a>. Put your sail number in the subject.</li>
+        <li>Tap <b>Share</b>, choose the <code>.vkx</code> file and send it with <b>Mail</b> to the address above. Put your sail number in the subject.</li>
         <li>You get a reply when it is in. Your boat appears on that day's replay within a few minutes, raced against everyone else who sailed.</li>
       </ol>
       <ol id="steps-gh">
@@ -178,7 +203,10 @@ if (S.upload_url) $("upload").href = S.upload_url;
 else { $("upload").hidden = true; $("acct").textContent = "Uploads open once this site is on GitHub."; }
 if (S.upload_email) {
   $("steps-mail").hidden = false; $("steps-gh").hidden = true;
-  $("email").textContent = S.upload_email; $("mailto").href = "mailto:" + S.upload_email + "?subject=Sail%20number%3A%20";
+  const mt = "mailto:" + S.upload_email + "?subject=Sail%20number%3A%20";
+  $("mailcard").hidden = false; $("addr").textContent = S.upload_email; $("addr").href = mt; $("mailbtn").href = mt;
+  $("mailbar").hidden = false; $("mailbar").querySelector(".em").textContent = S.upload_email;
+  $("copy").onclick = async () => { try { await navigator.clipboard.writeText(S.upload_email); $("copy").textContent = "Copied"; } catch (e) { $("copy").textContent = S.upload_email; } setTimeout(() => $("copy").textContent = "Copy address", 2000); };
   $("upload").textContent = "Or upload on a web page";
   $("acct").textContent = "No account needed.";
 } else if (S.upload_page) $("acct").textContent = "No account needed.";

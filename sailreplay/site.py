@@ -304,5 +304,9 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         '<style>[hidden]{display:none!important}body{margin:0}</style>\n</head>\n<body>\n'
         + page + "\n</body>\n</html>\n", encoding="utf-8")
     (out / ".nojekyll").write_text("")
+    for f in ("logo.png", "favicon.png"):                 # the fleet logo and site icon
+        src = Path(__file__).parent / "assets" / f
+        if src.exists():
+            (out / f).write_bytes(src.read_bytes())
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
     return manifest

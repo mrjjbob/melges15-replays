@@ -1,5 +1,6 @@
 <title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="icon" type="image/png" href="favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -26,7 +27,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 26px; }
 .home { font: 600 13px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-decoration: none; }
 .home:hover { color: var(--ink); }
-header { display: grid; gap: 6px; }
+header { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 20px; row-gap: 6px; align-items: center; }
+header .logo { grid-row: 1 / span 2; width: clamp(84px, 12vw, 130px); height: auto; }
 .eyebrow { font: 600 13px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
 h1 { margin: 0; font: 700 clamp(38px, 7vw, 60px)/0.95 var(--f-display); text-wrap: balance; }
 .notice { display: flex; gap: 14px; align-items: flex-start; border: 1px solid #6b5224; background: rgba(242,179,61,.07); border-radius: 12px; padding: 14px 16px; }
@@ -68,6 +70,7 @@ tr:last-child td { border-bottom: 0; }
 <div class="wrap">
   <a class="home" href="index.html">← All days</a>
   <header>
+    <img class="logo" src="logo.png" alt="Melges 15">
     <span class="eyebrow" id="club"></span>
     <h1>Preliminary results</h1>
   </header>

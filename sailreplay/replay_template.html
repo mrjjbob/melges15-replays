@@ -31,6 +31,8 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 /* header */
 .top { display: flex; align-items: center; gap: 18px; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--rule); background: var(--panel); flex-wrap: wrap; }
 .title { display: flex; flex-direction: column; min-width: 0; }
+.top .logo { display: block; flex: none; }
+.top .logo img { display: block; height: 46px; width: auto; }
 .title .home { font: 600 12px/1 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-decoration: none; margin-bottom: 4px; }
 .title .home:hover { color: var(--ink); }
 .title h1 { margin: 0; font: 600 26px/1 var(--f-display); letter-spacing: .01em; text-wrap: balance; }
@@ -174,6 +176,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel); }
   .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; padding-block: 8px;
          display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title clock" "races tabs"; gap: 8px 10px; }
+  .top .logo { display: none; }
   .title { grid-area: title; min-width: 0; }
   .clock { grid-area: clock; margin-left: 0; align-self: center; }
   .races { grid-area: races; min-width: 0; }
@@ -290,7 +293,14 @@ const date = new Date(M.t0_ms);
 $("title").textContent = M.title;
 document.title = DAY ? DAY.title : M.title;
 $("sub").textContent = (M.day_title || date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + " · " + (boats.length === 1 ? boats[0].name : boats.length + " boats") + (R.line ? " · line " + R.line.length_m + " m" : M.course && M.course.length_m ? " · course " + (M.course_letter ? M.course_letter + ", " : "") + M.course.length_m + " m" : "");
-if (DAY && DAY.home) { $("home").href = DAY.home; $("home").hidden = false; }
+if (DAY && DAY.home) {
+  $("home").href = DAY.home; $("home").hidden = false;
+  // on the fleet site: the fleet logo beside the title, linking home, and the site icon
+  const base = DAY.home.replace(/index\.html$/, "");
+  const a = document.createElement("a"); a.href = DAY.home; a.className = "logo"; a.innerHTML = `<img src="${base}logo.png" alt="Melges 15">`;
+  document.querySelector(".top .title").before(a);
+  const ic = document.createElement("link"); ic.rel = "icon"; ic.type = "image/png"; ic.href = base + "favicon.png"; document.head.appendChild(ic);
+}
 if (RACES.length > 1) {
   const nav = $("races"); nav.hidden = false;
   RACES.forEach((r, j) => { const b = document.createElement("button"); b.textContent = "R" + (j + 1); b.title = r.meta.title; b.setAttribute("aria-current", String(j === K));
