@@ -215,9 +215,25 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
             merged[-1][2] = L[2]
         else:
             merged.append(L)
+    def joined(prev, nxt):
+        # legs belong to one race if the gap between them is a rounding (75 s), or a reach
+        # (triangle and gold-cup courses) sailed with purpose for up to 5 minutes
+        gap = nxt[1] - prev[2]
+        if gap <= 75 * hz:
+            return True
+        if gap <= 300 * hz:
+            a, b = prev[2], nxt[1]
+            g = s.sog[a:b]
+            if not len(g) or np.nanmedian(g) < 2.5:
+                return False
+            path = np.nansum(np.hypot(np.diff(s.x[a:b]), np.diff(s.y[a:b])))
+            net = math.hypot(s.x[b - 1] - s.x[a], s.y[b - 1] - s.y[a])
+            return path > 0 and net / path >= 0.7               # a reach is sailed straight; milling is not
+        return False
+
     chains, cur = [], []
     for L in merged:
-        if cur and L[0] != cur[-1][0] and L[1] - cur[-1][2] <= 75 * hz:
+        if cur and L[0] != cur[-1][0] and joined(cur[-1], L):
             cur.append(L)
         else:
             if cur:
@@ -246,11 +262,11 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
         target = 0.6 * np.nanmedian(first) if np.isfinite(np.nanmedian(first)) else 1.0
         lo = max(0, a - int(40 * hz))
         st = next((i for i in range(lo, a + int(40 * hz)) if vmg[i] > target and np.nanmean(vmg[i:i + int(15 * hz)]) > target), a)
-        # Upwind finish (line off the committee boat): the finish is where the last beat stops
-        # gaining ground to windward, i.e. the boat crossed the line and eased off.
-        if c[-1][0] == 1:
-            e0, e1 = c[-1][1], min(n, c[-1][2] + int(30 * hz))
-            b = e0 + int(np.nanargmax(p[e0:e1]))
+        # Finish at the line off the committee boat. Upwind finish: where the last beat stops gaining
+        # ground to windward. Downwind finish (courses L and Z): where the last run stops losing it.
+        e0, e1 = c[-1][1], min(n, c[-1][2] + int(30 * hz))
+        if e1 > e0:
+            b = e0 + int(np.nanargmax(p[e0:e1]) if c[-1][0] == 1 else np.nanargmin(p[e0:e1]))
         marks = [{"kind": "start", "lat": float(s.lat[st]), "lon": float(s.lon[st]), "t": int(grid[st])}]
         for L in c:
             seg = p[L[1]:L[2]]
@@ -260,12 +276,35 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
             if L is not c[-1]:
                 marks.append({"kind": "windward" if L[0] == 1 else "leeward",
                               "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j])})
+        course, wing = _course_letter(c, s, p, hz, wrap180(twd - cs))
+        if wing is not None:
+            marks.append({"kind": "wing", "lat": float(s.lat[wing]), "lon": float(s.lon[wing]), "t": int(grid[wing])})
         fb = min(b, n - 1)
         marks.append({"kind": "finish", "lat": float(s.lat[fb]), "lon": float(s.lon[fb]), "t": int(grid[fb])})
         out.append({"start_ms": int(grid[st]), "finish_ms": int(grid[fb]),
-                    "legs": ["up" if L[0] == 1 else "down" for L in c],
+                    "legs": ["up" if L[0] == 1 else "down" for L in c], "course": course,
                     "marks": marks, "twd": float(circ_mean(twd[a:b]))})
     return out
+
+
+# CYC Frostbite Sailing Instructions, section 7: course letters by the legs sailed.
+# Reaching legs to and from a wing mark show up as the "down" part of the lap with a big sideways detour.
+COURSES = {
+    "W": "Windward–Leeward–Finish",
+    "W2": "Windward–Leeward twice around",
+    "L": "Windward–Finish",
+    "T": "Triangle",
+    "M": "Modified Gold Cup",
+    "Z": "Z pattern",
+}
+
+
+def _course_letter(c, s, p, hz, twa=None):
+    """Course letter from the pattern of legs. A triangle or gold-cup lap cannot be told apart
+    reliably from a run sailed with one gybe at hot light-air angles, so those read as W / W2;
+    the right letter can be set per race in site.json ("courses")."""
+    seq = tuple(L[0] for L in c)
+    return {(1, -1): "L", (1, -1, 1): "W", (1, -1, 1, -1): "Z", (1, -1, 1, -1, 1): "W2"}.get(seq, ""), None
 
 
 def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
@@ -314,6 +353,8 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
         chains = r.pop("_chains")
         best = max(chains, key=lambda c: len(c["legs"]))
         r["legs"] = best["legs"]
+        letters = [c.get("course") for c in chains if c.get("course")]
+        r["course_letter"] = max(set(letters), key=letters.count) if letters else ""
         r["twd"] = circ_mean([c["twd"] for c in chains])
         # marks: average each boat's rounding spot for the same mark
         marks = []
@@ -341,6 +382,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
     lat0 = next(m["lat"] for m in race["marks"])
     lon0 = next(m["lon"] for m in race["marks"])
     mlon = 111_320 * math.cos(math.radians(lat0))
+    sgn = -1.0 if (race.get("legs") or ["up"])[-1] == "down" else 1.0   # downwind finish on courses L and Z
     per = {}
     for name, log in boats:
         if name not in race["finish"]:
@@ -353,13 +395,14 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
         q = x * ux + y * uy
         ia = int(120 * hz)
         ifin = int((f_ms - grid[0]) / (1000 / hz))
-        # finish: on the last beat, near its highest point, the first clear drop in speed
+        # finish: on the last leg, near its furthest point, the first clear drop in speed
         lo, hi = max(ia, ifin - int(150 * hz)), min(len(grid) - 1, ifin + int(60 * hz))
-        qmax = np.nanmax(q[lo:hi]) if hi > lo else np.nan
+        qf = sgn * q
+        qmax = np.nanmax(qf[lo:hi]) if hi > lo else np.nan
         sm = _nan_movmean(bs.sog, int(6 * hz))
         drop = None
         for i in range(lo, hi - int(15 * hz)):
-            if q[i] < qmax - 40 or np.isnan(sm[i]):
+            if qf[i] < qmax - 40 or np.isnan(sm[i]):
                 continue
             before = np.nanmean(sm[max(0, i - int(30 * hz)):i])
             after = np.nanmean(sm[i:i + int(15 * hz)])
@@ -367,15 +410,21 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
                 drop = i
                 break
         if drop is None:
-            drop = lo + int(np.nanargmax(q[lo:hi])) if hi > lo else ifin
+            drop = lo + int(np.nanargmax(qf[lo:hi])) if hi > lo else ifin
         per[name] = dict(grid=grid, x=x, y=y, q=q, ia=ia, drop=drop)
     if not per:
         return
-    qline = float(np.nanmedian([v["q"][v["ia"]] for v in per.values()] + [v["q"][v["drop"]] for v in per.values()]))
+    if sgn > 0:
+        # Upwind finish: boats cross, carry on for a few seconds, then ease off. That drop places
+        # the line better than the start, where boats are still building speed below it.
+        qline = float(np.nanmedian([v["q"][v["drop"]] for v in per.values()])) - 8.0
+    else:
+        qline = float(np.nanmedian([v["q"][v["ia"]] for v in per.values()] + [v["q"][v["drop"]] for v in per.values()]))
 
-    def crossing(v, a, b, prefer):
-        q = v["q"]
-        xs = [i for i in range(max(1, a), min(len(q) - 1, b)) if q[i - 1] < qline <= q[i]]
+    def crossing(v, a, b, prefer, d=1.0):
+        q = d * v["q"]
+        ql = d * qline
+        xs = [i for i in range(max(1, a), min(len(q) - 1, b)) if q[i - 1] < ql <= q[i]]
         if not xs:
             return None
         return min(xs, key=lambda i: abs(i - prefer))
@@ -383,7 +432,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0) -> N
     starts, fins, a_s, a_f = [], {}, [], []
     for name, v in per.items():
         i_s = crossing(v, v["ia"] - int(60 * hz), v["ia"] + int(45 * hz), v["ia"]) or v["ia"]
-        i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"]) or v["drop"]
+        i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], sgn) or v["drop"]
         starts.append(int(v["grid"][i_s]))
         fins[name] = int(v["grid"][i_f])
         a_s.append(float(v["x"][i_s] * rx + v["y"][i_s] * ry))
@@ -564,6 +613,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
             "has_wind_sensor": any(l.wind for l in logs),
             "start_estimated": bool(race and race.get("estimated")),
             "course": (race or {}).get("course"),
+            "course_letter": (race or {}).get("course_letter", ""),
             "marks": [{"kind": m["kind"], "lat": _r(m["lat"], 6), "lon": _r(m["lon"], 6)} for m in (race or {}).get("marks", [])],
             "line_est": (race or {}).get("line_est") if line is None else None,
         },
@@ -1059,6 +1109,7 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
         s = win["summary"]
         rows.append({
             "race": k, "start_ms": r["start_ms"], "estimated": r.get("estimated", False),
+            "course_letter": r.get("course_letter", ""),
             "elapsed_s": s["elapsed_s"], "winner": win["name"], "boats": len(bs),
             "twd": rr["wind"].get("twd_avg") if rr["wind"].get("twd_avg") is not None else rr["meta"]["twd_global"],
             "course": r.get("course") or {},
@@ -1066,6 +1117,8 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
             "tack_loss_m": s["tack_loss_m"],
             "tws": rr["wind"]["speed"].get("tws"), "tws_lo": rr["wind"]["speed"].get("tws_lo"),
             "tws_hi": rr["wind"]["speed"].get("tws_hi"),
-            "results": [{"name": b["name"], "pos": b["summary"]["position"], "elapsed_s": b["summary"]["elapsed_s"]} for b in bs],
+            "results": [{"name": b["name"], "pos": b["summary"]["position"], "elapsed_s": b["summary"]["elapsed_s"],
+                         "sailed": b["summary"]["elapsed_s"] is not None or (b["summary"]["distance_m"] or 0) >= 300}
+                        for b in bs],
         })
     return {"day": {"title": day_title, "races": rows}, "races": out}

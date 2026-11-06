@@ -1,0 +1,16 @@
+{
+  "_note": "Melges 15 fleet, from the 2025-26 CYC Frostbite results. Add each boat's Atlas serial number to 'serials' so its uploads are always matched; 'aliases' catches other names the files might carry.",
+  "boats": [
+    {"sail": "900", "name": "Hafen", "skipper": "Max Hafen", "serials": ["0228005931"], "aliases": ["Max Hafen"]},
+    {"sail": "302", "name": "Rubel", "serials": [], "aliases": []},
+    {"sail": "214", "name": "Adwar", "serials": [], "aliases": []},
+    {"sail": "270", "name": "Simkins", "serials": [], "aliases": ["Glackin"]},
+    {"sail": "602", "name": "Cuzzocrea", "serials": [], "aliases": []},
+    {"sail": "273", "name": "Scarpulla", "serials": [], "aliases": []},
+    {"sail": "362", "name": "Rulli", "serials": [], "aliases": ["Lofredo"]},
+    {"sail": "529", "name": "Brendel", "serials": [], "aliases": []},
+    {"sail": "961", "name": "Schneider", "serials": [], "aliases": []},
+    {"sail": "263", "name": "Gilchrist", "serials": [], "aliases": []},
+    {"sail": "697", "name": "Grunbeck", "serials": [], "aliases": []}
+  ]
+}

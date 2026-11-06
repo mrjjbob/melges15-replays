@@ -168,22 +168,31 @@ def test_series_assignment():
     assert series_for("2027-03-07", ser)["name"] == "P2"
 
 
-def test_low_point_scoring():
-    from sailreplay.site import score_series
+def test_cyc_high_point_scoring():
+    from sailreplay.site import score_series, race_points
+    # SI 13.1: a point per boat beaten plus one; DNF scores 1. SI 11.2: over 10 min behind the first is DNF.
+    pts, _ = race_points([{"name": "A", "pos": 1, "elapsed_s": 600}, {"name": "B", "pos": 2, "elapsed_s": 650},
+                          {"name": "C", "pos": 3, "elapsed_s": 1300}, {"name": "D", "pos": 4, "elapsed_s": None},
+                          {"name": "E", "pos": 5, "elapsed_s": None, "sailed": False}])
+    assert pts == {"A": (4, None), "B": (3, None), "C": (1, "DNF"), "D": (1, "DNF")}
     day1 = {"date": "2026-11-08", "title": "d1", "boats": ["A", "B", "C"], "race_rows": [
         {"race": 1, "results": [{"name": "A", "pos": 2, "elapsed_s": 700}, {"name": "B", "pos": 1, "elapsed_s": 650},
                                 {"name": "C", "pos": 3, "elapsed_s": None}]}]}
     day2 = {"date": "2026-11-15", "title": "d2", "boats": ["A", "C"], "race_rows": [
         {"race": 1, "results": [{"name": "A", "pos": 1, "elapsed_s": 600}, {"name": "C", "pos": 2, "elapsed_s": 640}]}]}
-    s = score_series("P1", [day1, day2])
+    s = score_series("Fall", [day1, day2])
     by = {r["boat"]: r for r in s["rows"]}
-    assert s["entries"] == 3
-    assert [x["pts"] for x in by["A"]["scores"]] == [2, 1]
-    assert by["B"]["scores"][1]["code"] == "DNC" and by["B"]["scores"][1]["pts"] == 4
-    assert by["C"]["scores"][0]["code"] == "DNF"
-    assert s["rows"][0]["boat"] == "A"
-    s2 = score_series("P1", [day1, day2], discards=1)
-    assert {r["boat"]: r["net"] for r in s2["rows"]}["B"] == 1
+    assert [x["pts"] for x in by["A"]["scores"]] == [2, 2] and by["A"]["total"] == 4
+    assert by["B"]["scores"][1] == {"pts": 0, "code": "DNC"} and by["B"]["total"] == 3
+    assert by["C"]["scores"][0]["code"] == "DNF" and by["C"]["total"] == 2
+    assert s["rows"][0]["boat"] == "A" and by["A"]["qualified"] and not by["B"]["qualified"]
+    # regatta: worst race dropped when five or more are sailed (SI 13.3)
+    rows = [{"race": k, "results": [{"name": "A", "pos": 1, "elapsed_s": 600 + (k == 3) * 100},
+                                    {"name": "B", "pos": 2, "elapsed_s": 650}]} for k in range(1, 6)]
+    rg = score_series("New Year's Regatta", [{"date": "2027-01-03", "title": "ny", "boats": ["A", "B"], "race_rows": rows}],
+                      kind="regatta", discard_from=5)
+    a = {r["boat"]: r for r in rg["rows"]}["A"]
+    assert a["total"] == 9 and a["net"] == 8 and sum(1 for x in a["scores"] if x.get("dropped")) == 1
 
 
 def test_site_builds(tmp_path):
@@ -272,3 +281,39 @@ def test_downloader_skips_live_and_parked(tmp_path, monkeypatch):
     span_h = (log.end_ms - log.start_ms) / 3.6e6
     assert 2.0 <= span_h <= 3.0                                # 2 h sailing + 15 min either side, not 42 h
     assert fake.fetched < 42 * 60 * 0.25                       # fetched well under a quarter of the session
+
+
+@pytest.mark.parametrize("course,letter,legs", [
+    ("W", "W", ["up", "down", "up"]),
+    ("L", "L", ["up", "down"]),
+    ("T", "W", ["up", "down", "up"]),          # a triangle reads as W (see _course_letter)
+    ("W2", "W2", ["up", "down", "up", "down", "up"]),
+    ("Z", "Z", ["up", "down", "up", "down"]),
+])
+def test_cyc_courses(tmp_path, course, letter, legs, capsys):
+    import make_demo_race
+    make_demo_race.simulate(tmp_path, timers=False, course=course)
+    sim = {l.split("->")[0].strip(): float(l.split("finished ")[1].split(" ")[0])
+           for l in capsys.readouterr().out.splitlines() if "finished" in l}
+    boats = [(p.stem.replace("_", " ").title(), vkx.parse_file(p)) for p in sorted(tmp_path.glob("*.vkx"))]
+    races = analysis.find_races(boats)
+    assert len(races) == 1
+    r = races[0]
+    assert r["course_letter"] == letter and r["legs"] == legs
+    assert abs(r["start_ms"] - make_demo_race.GUN_MS) < 15_000
+    assert sorted(r["finish"], key=r["finish"].get) == sorted(sim, key=sim.get)
+    for name, ms in r["finish"].items():
+        assert abs((ms - make_demo_race.GUN_MS) / 1000 - sim[name] * 60) < 40
+
+
+def test_fleet_matching():
+    from pathlib import Path as P
+    from sailreplay.site import resolve_boat
+    fleet = [{"sail": "900", "name": "Hafen", "serials": ["0228005931"], "aliases": ["Max Hafen"]},
+             {"sail": "302", "name": "Rubel"}, {"sail": "270", "name": "Simkins", "aliases": ["Glackin"]}]
+    assert resolve_boat(P("Max_Hafen_s_Vakaros_3-22-2026.vkx"), {}, fleet) == "900 Hafen"
+    assert resolve_boat(P("hafen_20261108_1552_s3.vkx"), {}, fleet) == "900 Hafen"
+    assert resolve_boat(P("0228005931_20261108_1552_s3.vkx"), {}, fleet) == "900 Hafen"
+    assert resolve_boat(P("302.vkx"), {}, fleet) == "302 Rubel"
+    assert resolve_boat(P("Glackin.vkx"), {}, fleet) == "270 Simkins"
+    assert resolve_boat(P("New_Sailor_s_Vakaros_11-8-2026.vkx"), {}, fleet) == "New Sailor"

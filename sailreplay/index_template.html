@@ -28,7 +28,11 @@ header { display: grid; gap: 6px; margin-bottom: 32px; }
 .eyebrow { font: 600 13px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
 h1 { margin: 0; font: 700 clamp(40px, 7vw, 68px)/0.95 var(--f-display); letter-spacing: .005em; text-wrap: balance; }
 .meta { color: var(--muted); font-size: 15px; }
-.results-link { justify-self: start; margin-top: 10px; font: 700 16px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); text-decoration: none; border: 1px solid #6b5224; border-radius: 999px; padding: 9px 14px; }
+.hlinks { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; }
+.hlinks #links { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; }
+.hlinks #links a { color: var(--muted); }
+.hlinks #links a:hover { color: var(--ink); }
+.results-link { justify-self: start; font: 700 16px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); text-decoration: none; border: 1px solid #6b5224; border-radius: 999px; padding: 9px 14px; }
 .results-link:hover { background: rgba(242,179,61,.08); }
 .group { display: grid; gap: 10px; }
 .group + .group { margin-top: 26px; }
@@ -86,7 +90,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     <span class="eyebrow" id="club"></span>
     <h1 id="title"></h1>
     <span class="meta" id="meta"></span>
-    <a class="results-link" href="results.html">Preliminary results →</a>
+    <div class="hlinks"><a class="results-link" href="results.html">Preliminary results →</a><span id="links"></span></div>
   </header>
   <div class="grid">
     <section>
@@ -97,7 +101,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
       <h3>Add your race</h3>
       <ol>
         <li>After sailing, open <b>Vakaros Connect</b>, pick the session, and export it as a <code>.vkx</code> file.</li>
-        <li>Keep the name it gives you, like <code>Your Name_s_Vakaros_3-22-2026.vkx</code>, or rename it after your boat, like <code>Mojo.vkx</code>. That name is what shows on the replay.</li>
+        <li>Keep the name it gives you, like <code>Your Name_s_Vakaros_11-8-2026.vkx</code>. Boats are matched to the fleet list by surname, or put your sail number in the name, like <code>302.vkx</code>.</li>
         <li>Upload it with the button below: drag the file in, then press <b>Commit changes</b>.</li>
         <li>The site rebuilds itself. Your boat appears on that day's replay within about two minutes, raced against everyone else who sailed.</li>
       </ol>
@@ -120,6 +124,7 @@ const compass = d => POINTS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
 
 $("title").textContent = S.title;
 $("club").textContent = S.club || "Melges 15 fleet";
+$("links").innerHTML = (S.links || []).map(l => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join("");
 const racing = S.days.filter(d => d.races);
 $("meta").textContent = racing.length
   ? `${racing.length} racing day${racing.length === 1 ? "" : "s"} · ${racing.reduce((a, d) => a + d.races, 0)} races · ${S.boat_count} boat${S.boat_count === 1 ? "" : "s"}`

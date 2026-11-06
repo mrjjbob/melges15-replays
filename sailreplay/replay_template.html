@@ -252,7 +252,7 @@ const raceT = i => i / HZ - (GUN ?? 0);
 const date = new Date(M.t0_ms);
 $("title").textContent = M.title;
 document.title = DAY ? DAY.title : M.title;
-$("sub").textContent = (M.day_title || date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + " · " + (boats.length === 1 ? boats[0].name : boats.length + " boats") + (R.line ? " · line " + R.line.length_m + " m" : M.course && M.course.length_m ? " · course " + M.course.length_m + " m" : "");
+$("sub").textContent = (M.day_title || date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + " · " + (boats.length === 1 ? boats[0].name : boats.length + " boats") + (R.line ? " · line " + R.line.length_m + " m" : M.course && M.course.length_m ? " · course " + (M.course_letter ? M.course_letter + ", " : "") + M.course.length_m + " m" : "");
 if (DAY && DAY.home) { $("home").href = DAY.home; $("home").hidden = false; }
 if (RACES.length > 1) {
   const nav = $("races"); nav.hidden = false;
@@ -637,7 +637,7 @@ function renderDebrief() {
     const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
     for (const r of DAY.races) {
       const c = r.course || {};
-      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
     }
     h += `</tbody></table></div></div>`;
   }

@@ -52,9 +52,19 @@ LX, LY = vec(TWD0 - 90)                  # looking upwind, left = pin end
 PIN = (60 * LX, 60 * LY)
 RC = (-60 * LX, -60 * LY)
 WMARK = (900 * UX, 900 * UY)
-LMARK = (-40 * UX, -40 * UY)
+LMARK = (-180 * UX, -180 * UY)
 FINISH = (0.0, 0.0)
-COURSE = [("W", WMARK), ("L", LMARK), ("W", WMARK), ("F", FINISH)]
+WING = (450 * UX + 380 * LX, 450 * UY + 380 * LY)
+FINISH_UP = (RC[0] - 35 * LX + 4 * UX, RC[1] - 35 * LY + 4 * UY)   # finish mark to starboard of the committee boat
+# CYC Frostbite SI 7. W = beat, L = run, R = reach, F = finish downwind, U = finish upwind
+COURSES = {
+    "Z": [("W", WMARK), ("L", LMARK), ("W", WMARK), ("F", FINISH)],
+    "W": [("W", WMARK), ("L", LMARK), ("U", FINISH_UP)],
+    "L": [("W", WMARK), ("F", FINISH)],
+    "T": [("W", WMARK), ("R", WING), ("R", LMARK), ("U", FINISH_UP)],
+    "W2": [("W", WMARK), ("L", LMARK), ("W", WMARK), ("L", LMARK), ("U", FINISH_UP)],
+}
+COURSE = COURSES["Z"]
 
 BOATS = [
     # name,        speed, tack-angle, recovery-tau, shift-sense, line-frac, start-lead
@@ -66,7 +76,8 @@ BOATS = [
 
 
 class Boat:
-    def __init__(self, name, k, alpha, tau, sense, frac, lead, seed):
+    def __init__(self, name, k, alpha, tau, sense, frac, lead, seed, course=None):
+        self.course = course or COURSE
         self.name, self.k, self.alpha, self.tau, self.sense = name, k, alpha, tau, sense
         self.frac, self.lead = frac, lead
         self.rng = random.Random(seed)
@@ -107,20 +118,24 @@ class Boat:
             if abs(wrap(b - twd)) >= self.alpha:
                 return b, 5.0
             return twd - self.alpha, 5.0
-        kind, mark = COURSE[self.leg]
+        kind, mark = self.course[self.leg]
         dx, dy = mark[0] - self.x, mark[1] - self.y
-        if math.hypot(dx, dy) < 18 or (kind == "F" and self._crossed_line_downwind()):
+        done = (kind == "F" and self._crossed_line_downwind()) or (kind == "U" and self._signed_dist_to_line() > 0)
+        if done or (kind not in "FU" and math.hypot(dx, dy) < 18):
             self.leg += 1
-            if self.leg >= len(COURSE):
+            if self.leg >= len(self.course):
                 self.finished_at = t
                 return twd - 100, 2.5
-            kind, mark = COURSE[self.leg]
+            kind, mark = self.course[self.leg]
             dx, dy = mark[0] - self.x, mark[1] - self.y
-            self._turn_to(1 if kind == "W" else self.side, t, force=True)
+            self._turn_to(1 if kind in "WU" else self.side, t, force=True)
         b = math.degrees(math.atan2(dx, dy)) % 360
         mean = TWD0 + 0.004 * max(0, t)
         dist = math.hypot(dx, dy)
-        if kind == "W":
+        if kind == "R":                                        # reach: straight at the mark
+            self._turn_to(1 if wrap(twd - b) > 0 else -1, t)
+            return b, 7.0
+        if kind in "WU":
             rel = wrap(b - twd)
             if abs(rel) >= self.alpha and dist < 250:          # fetching the mark: steer straight at it
                 self._turn_to(1 if rel < 0 else -1, t)
@@ -158,7 +173,7 @@ class Boat:
         return self._signed_dist_to_line() > 0
 
     def _crossed_line_downwind(self):
-        return self._signed_dist_to_line() < 0 and self.leg == len(COURSE) - 1
+        return self._signed_dist_to_line() < 0 and self.leg == len(self.course) - 1
 
     # ---- physics ---------------------------------------------------------
     def step(self, t):
@@ -196,10 +211,10 @@ class Boat:
         return heel, pitch, hdg
 
 
-def simulate(out_dir: Path, timers: bool = True):
+def simulate(out_dir: Path, timers: bool = True, course: str = "Z"):
     out_dir.mkdir(parents=True, exist_ok=True)
     for i, spec in enumerate(BOATS):
-        b = Boat(*spec, seed=100 + i)
+        b = Boat(*spec, seed=100 + i, course=COURSES[course])
         w = VkxWriter()
         w.config(4)
         w.internal(0x01, 32)

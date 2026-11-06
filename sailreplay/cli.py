@@ -339,7 +339,11 @@ def cmd_site(args) -> None:
     sp = Path(args.config)
     if sp.exists():
         site_cfg = json.loads(sp.read_text())
-    m = site.build_site(args.logs, args.out, boats_cfg=cfg, site_cfg=site_cfg, repo=args.repo, branch=args.branch)
+    fleet = []
+    fp = Path(args.fleet)
+    if fp.exists():
+        fleet = json.loads(fp.read_text()).get("boats", [])
+    m = site.build_site(args.logs, args.out, boats_cfg=cfg, site_cfg=site_cfg, repo=args.repo, branch=args.branch, fleet=fleet)
     print(f"\n{len([d for d in m['days'] if d['races']])} racing days, {m['boat_count']} boats -> {Path(args.out) / 'index.html'}")
     for p in m["problems"]:
         print("  skipped:", p)
@@ -397,6 +401,7 @@ def main(argv=None) -> None:
     st.add_argument("logs", nargs="?", default="logs", help="folder of .vkx files (default logs/)")
     st.add_argument("-o", "--out", default="_site")
     st.add_argument("--config", default="site.json", help="site settings (title, club, timezone)")
+    st.add_argument("--fleet", default="fleet.json", help="fleet list: sail numbers, names, Atlas serials")
     st.add_argument("--repo", help="owner/name on GitHub, for the upload button")
     st.add_argument("--branch", default="main")
     st.set_defaults(func=cmd_site)
