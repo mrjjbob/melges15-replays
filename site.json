@@ -3,18 +3,37 @@
   "club": "Centerport YC · Melges 15 Frostbite Fleet",
   "timezone": "America/New_York",
   "series": [
-    {"name": "Fall ’26 Series", "start": "2026-11-08", "end": null},
-    {"name": "Spring ’27 Series", "start": null, "end": null}
+    {
+      "name": "Fall ’26 Series",
+      "start": "2026-11-08",
+      "end": null
+    },
+    {
+      "name": "Spring ’27 Series",
+      "start": null,
+      "end": null
+    }
   ],
   "regattas": [],
   "labels": {
-    "2026-03-22": "Test race"
+    "2026-03-22": "Test race",
+    "2024-09-08": "Test race",
+    "2025-11-30": "Test race"
   },
   "courses": {},
   "links": [
-    {"label": "CYC Frostbiting", "url": "https://centerport-yc.org/frostbiting"},
-    {"label": "Official results", "url": "https://centerportyc.theclubspot.com/document-storage/8teCvHDbVY"},
-    {"label": "Sailing Instructions", "url": "https://centerportyc.theclubspot.com/document-storage/HJ0YFPOVUc"}
+    {
+      "label": "CYC Frostbiting",
+      "url": "https://centerport-yc.org/frostbiting"
+    },
+    {
+      "label": "Official results",
+      "url": "https://centerportyc.theclubspot.com/document-storage/8teCvHDbVY"
+    },
+    {
+      "label": "Sailing Instructions",
+      "url": "https://centerportyc.theclubspot.com/document-storage/HJ0YFPOVUc"
+    }
   ],
   "results_note": "Preliminary results from the uploaded Atlas data. Subject to change after the weekly results email."
 }

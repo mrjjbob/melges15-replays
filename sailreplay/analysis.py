@@ -236,9 +236,24 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
             return path > 0 and net / path >= 0.7               # a reach is sailed straight; milling is not
         return False
 
+    def net(L):
+        a, b = L[1], min(n - 1, L[2] - 1)
+        return s.x[b] - s.x[a], s.y[b] - s.y[a]
+
+    def same_course(prev, nxt):
+        # consecutive legs of a windward-leeward race run back and forth along one line: the next
+        # leg heads back roughly the way the last one came (within 55 degrees) and is not wildly
+        # longer. Sailing home on a reach after the last race fails this.
+        (px, py), (nx, ny) = net(prev), net(nxt)
+        lp, ln = math.hypot(px, py), math.hypot(nx, ny)
+        if lp < 30 or ln < 30:
+            return True
+        ang = math.degrees(math.acos(max(-1.0, min(1.0, -(px * nx + py * ny) / (lp * ln)))))
+        return ang <= 55 and ln <= 3.0 * lp
+
     chains, cur = [], []
     for L in merged:
-        if cur and L[0] != cur[-1][0] and joined(cur[-1], L):
+        if cur and L[0] != cur[-1][0] and joined(cur[-1], L) and same_course(cur[-1], L):
             cur.append(L)
         else:
             if cur:
@@ -255,8 +270,10 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
             c = c[1:]
         if len(c) < 2 or c[0][0] != 1:
             continue
-        while len(c) > 2 and c[-1][0] == -1 and c[-1][2] - c[-1][1] < 90 * hz:
-            c = c[:-1]                               # bearing away after finishing
+        while len(c) > 2 and c[-1][0] == -1 and (c[-1][2] - c[-1][1] < 90 * hz
+                                                 or math.hypot(*net(c[-1])) < 0.6 * max(
+                                                     [math.hypot(*net(L)) for L in c[:-1] if L[0] == -1] or [0])):
+            c = c[:-1]     # bearing away after finishing: a real last run is as long as the other runs
         a, b = c[0][1], c[-1][2]
         # a race is sailed: a parked or drifting boat (GPS wander, a boat on a trailer) is not racing
         seg = s.sog[a:b]
@@ -291,6 +308,7 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
         marks.append({"kind": "finish", "lat": float(s.lat[fb]), "lon": float(s.lon[fb]), "t": int(grid[fb])})
         out.append({"start_ms": int(grid[st]), "finish_ms": int(grid[fb]),
                     "legs": ["up" if L[0] == 1 else "down" for L in c], "course": course,
+                    "_legs": [(L[0], int(grid[L[1]]), int(grid[min(n - 1, L[2])]), round(math.hypot(*net(L)))) for L in c],
                     "marks": marks, "twd": float(circ_mean(twd[a:b]))})
     return out
 
