@@ -426,14 +426,15 @@ function draw() {
     ctx.strokeText(b.name, sx(p.x) + 12, sy(p.y) - 10); ctx.fillText(b.name, sx(p.x) + 12, sy(p.y) - 10);
   });
 }
-function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(10, 1 + (pc - 60) * 0.11)); }
+// 60% → 1 px, 100% → 3 px, 150% → 5.4 px (the old 100% width), capped at 6.5 px
+function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 + (pc - 60) * 0.049)); }
 function paceLegend() {
   const x = 18, y = H - 128;
   ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "left";
   ctx.fillText("TRAIL WIDTH = PACE", x, y);
   ctx.font = "500 11px " + cssv("--f-data");
   ctx.fillText(`% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
-  [[80, "80%"], [100, "100%"], [120, "120%"]].forEach(([pc, t], k) => {
+  [[80, "80%"], [100, "100%"], [150, "150%"]].forEach(([pc, t], k) => {
     const yy = y + 32 + k * 15;
     ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = paceWidth(pc);
     ctx.beginPath(); ctx.moveTo(x, yy - 4); ctx.lineTo(x + 34, yy - 4); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineCap = "butt";
