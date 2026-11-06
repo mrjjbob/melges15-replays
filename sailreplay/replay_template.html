@@ -67,7 +67,7 @@ canvas#map.drag { cursor: grabbing; }
 .windbox .tide .bars { display: inline-flex; align-items: flex-end; gap: 3px; }
 .windbox .tide .bars i { width: 5px; border-radius: 1px; background: var(--rule); }
 .windbox .tide .bars i.on { background: #6fb7d9; }
-.windbox .src b { color: var(--ink); font-weight: 600; }
+.windbox .k .avg { letter-spacing: .06em; color: var(--ink); opacity: .75; margin-left: 4px; }
 .maptools { position: absolute; left: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { background: rgba(9,22,32,.82); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 11px; font: 600 13px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
 .chip[aria-pressed="true"] { color: var(--ink); border-color: var(--muted); }
@@ -207,9 +207,8 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
         </div>
         <div class="windbox" id="windbox">
           <canvas id="windArrow" width="56" height="56" aria-hidden="true"></canvas>
-          <div class="col"><span class="k">Wind from</span><span class="v" id="twd">—</span></div>
-          <div class="col"><span class="k">Shift</span><span class="sh" id="shift">—</span><span class="shc" id="shiftc"></span></div>
-          <span class="src" id="twdSrc"></span>
+          <div class="col"><span class="k">Wind from</span><span class="v" id="twd">—</span><span class="shc" id="tws"></span></div>
+          <div class="col"><span class="k">Shift <span class="avg" id="avg"></span></span><span class="sh" id="shift">—</span><span class="shc" id="shiftc"></span></div>
           <span class="tide" id="tide" hidden></span>
         </div>
       </div>
@@ -505,7 +504,9 @@ function drawWind() {
   }
   const tws = R.wind.tws ? R.wind.tws[Math.min(R.wind.tws.length - 1, Math.floor(state.i / R.wind.every))] : null;
   drawTide();
-  $("twdSrc").innerHTML = (avg != null ? `Race average <b>${avg}°</b>` : "") + (tws != null ? ` · about <b>${Math.round(tws)} kt</b>` : "") + `<br>${srcText}`;
+  $("avg").textContent = avg != null ? "from " + avg + "°" : "";
+  $("avg").title = avg != null ? "Race average wind direction" : "";
+  $("tws").textContent = tws != null ? "≈ " + Math.round(tws) + " kt" : "";
 }
 function tideRow() {
   if (!TIDE) return "";
