@@ -490,7 +490,7 @@ def _slope(a, q, max_deg=20.0, min_spread=30.0):
     return max(-lim, min(lim, k))
 
 
-def _share_committee(races: list[dict], boats, near_m: float = 40.0) -> None:
+def _share_committee(races: list[dict], boats, near_m: float | None = None) -> None:
     """The committee boat stays anchored all day (it only swings on its anchor), and so does the
     finish mark; only the pin is moved much, to square the line. So when the estimates for
     races in a row put the committee boat within 40 m of each other, it is the same spot: average
@@ -499,6 +499,10 @@ def _share_committee(races: list[dict], boats, near_m: float = 40.0) -> None:
     def xy(p, ref):
         ml = 111_320 * math.cos(math.radians(ref[0]))
         return ((p[1] - ref[1]) * ml, (p[0] - ref[0]) * 111_320)
+    # With one or two boats each race's estimate is rough (tens of metres), so estimates further
+    # apart still most likely mean the same anchored committee boat.
+    if near_m is None:
+        near_m = 40.0 if len(boats) >= 3 else 120.0
     est = [r for r in races if r.get("line_est") and r.get("_onset")]
     groups = []
     for r in est:
@@ -566,7 +570,10 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
                 continue
             before = np.nanmean(sm[max(0, i - int(30 * hz)):i])
             after = np.nanmean(sm[i:i + int(15 * hz)])
-            if before > 2 and after < 0.72 * before:
+            # a real finish: speed falls away AND the boat stops making ground up the course
+            # (a tack near the line slows the boat too, but it carries on upwind afterwards)
+            gain = np.nanmax(qf[i:i + int(30 * hz)]) - qf[i]
+            if before > 2 and after < 0.65 * before and gain < 8:
                 drop = i
                 break
         if drop is None:
@@ -583,7 +590,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
     if sgn > 0:
         # Upwind finish: boats cross, carry on for a few seconds, then ease off. That drop places
         # the line better than the start, where boats are still building speed below it.
-        q0 = float(np.nanmedian(q_dr)) - 8.0
+        q0 = float(np.nanmedian(q_dr)) - 2.0
     else:
         q0 = float(np.nanmedian(q_on + q_dr))
     a_ref = float(np.nanmedian(a_dr)) if sgn > 0 else float(np.nanmedian(a_on + a_dr))
@@ -624,11 +631,14 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
             a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
         return st, fi, a_s, a_f
     starts, fins, a_s, a_f = times(flat, flat)
-    right = np.mean(a_f) >= np.mean(a_s)               # finish end lies to the right of the start
-    if right:
-        rc = (max(a_s) + min(a_f)) / 2 if max(a_s) < min(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
+    # Looking up the course, the start is always to the left of the committee boat and the finish
+    # to the right. Where boats started and finished agree with that, the committee boat goes
+    # between them; where they do not (one boat, a start at the committee end), trust the start.
+    right = True
+    if max(a_s) < min(a_f):
+        rc = (max(a_s) + min(a_f)) / 2
     else:
-        rc = (min(a_s) + max(a_f)) / 2 if min(a_s) > max(a_f) else (np.mean(a_s) + np.mean(a_f)) / 2
+        rc = max(a_s) + 5
     # pass 2: both lines meet at the committee boat; each tilts to fit its own boats
     q_rc = q0 + k_f * (rc - a_ref)
     fin_mark_a = None
@@ -638,7 +648,7 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
         if fixed_fin is not None:                      # and the finish mark's: that sets the finish line
             X, Y = (fixed_fin[1] - lon0) * mlon, (fixed_fin[0] - lat0) * 111_320
             fa, fq = X * rx + Y * ry, X * ux + Y * uy
-            if abs(fa - rc) >= 10:
+            if fa - rc >= 10:                          # the finish mark is right of the committee boat
                 lim = math.tan(math.radians(25))
                 k_f = max(-lim, min(lim, (fq - q_rc) / (fa - rc)))
                 right, fin_mark_a = fa > rc, fa

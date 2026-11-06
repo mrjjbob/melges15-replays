@@ -432,7 +432,7 @@ def test_committee_boat_shared_between_races(monkeypatch):
     mk = lambda i, y: {"id": i, "_onset": {"a": 0}, "_fin0": {}, "finish": {},
                        "line_est": {"rc": [40.9 + y * d, -73.36], "finish_end": [40.9 + y * d, -73.3605]}}
     races = [mk(1, 0), mk(2, 20), mk(3, 10), mk(4, 120), mk(5, 300), mk(6, 310)]
-    analysis._share_committee(races, [])
+    analysis._share_committee(races, [1, 2, 3])                 # a fleet: estimates within 40 m are one spot
     got = {i: rc for i, rc in calls}
     assert set(got) == {1, 2, 3, 5, 6}                     # race 4 stands alone, so is not refitted
     assert abs(got[1][0] - (40.9 + 10 * d)) < 1e-9 and got[1] == got[2] == got[3]

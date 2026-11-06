@@ -115,6 +115,10 @@ td .pen { font: 600 10px/1 var(--f-display); letter-spacing: .1em; text-transfor
 .debrief .inner > * { min-width: 0; }
 .debrief h2 { margin: 0 0 10px; font: 600 24px/1.1 var(--f-display); letter-spacing: .02em; }
 .debrief p.note { margin: 0 0 10px; color: var(--muted); max-width: 70ch; }
+.debrief td.cmoved, .debrief td.cmoved b { color: var(--accent); }
+.debrief td.ctype { color: #ff6fae; }
+.debrief td.ctype b { color: #12202b; background: #ff6fae; padding: 1px 5px; border-radius: 4px; }
+.debrief td .gt { color: var(--muted); }
 .debrief .fold { cursor: pointer; user-select: none; }
 .debrief .fold .more { display: inline-block; width: 18px; height: 18px; margin-left: 8px; vertical-align: 2px; border: 1px solid var(--rule); border-radius: 50%; position: relative; opacity: .7; }
 .debrief .fold .more::after { content: "i"; position: absolute; inset: 0; display: grid; place-items: center; font: 600 11px/1 var(--f-body); color: var(--muted); }
@@ -245,7 +249,7 @@ const DAY = DATA.day || null;
 const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
 let ctl = null, cur = null;
 // settings that carry from race to race (cycling rebuilds the page for each race)
-const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, paceTrail: true, loop: false, orient: "wind", notes: new Set() };
+const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, trailMode: "pace", loop: false, orient: "wind", notes: new Set() };
 function parseHash() {
   const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
@@ -342,7 +346,22 @@ if (M.marks && M.marks.length) {
 
 // ---------- state
 const HAS_PACE = boats.some(b => b.track.pace);
-const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: SESSION.speed, follow: null, trail: SESSION.trail, loop: SESSION.loop, paceTrail: SESSION.paceTrail,
+// VMG width: speed made good toward (upwind) or away from (downwind) the wind, not toward the marks,
+// as a % of the fleet's average for that kind of leg in this race
+const VMG_REF = (() => {
+  const avg = k => { const v = boats.map(b => b.summary[k]).filter(x => x != null && x > 0); return v.length ? v.reduce((a, c) => a + c, 0) / v.length : null; };
+  return { up: avg("up_vmg"), down: avg("dn_vmg") };
+})();
+const HAS_VMG = VMG_REF.up != null && boats.some(b => b.track.vmg);
+const TRAIL_MODES = [["pace", "Pace width"], ["vmg", "VMG width"], ["plain", "Plain trail"]].filter(([k]) => (k !== "pace" || HAS_PACE) && (k !== "vmg" || HAS_VMG));
+if (!TRAIL_MODES.some(m => m[0] === SESSION.trailMode)) SESSION.trailMode = TRAIL_MODES[0][0];
+function trailPct(b, i) {
+  if (state.trailMode === "pace") return b.track.pace ? b.track.pace[i] : null;
+  const md = b.track.mode[i], v = b.track.vmg[i], ref = md === "up" ? VMG_REF.up : md === "down" ? VMG_REF.down : null;
+  if (v == null || !ref || (GUN != null && raceT(i) < 0)) return null;
+  return 100 * v / ref;
+}
+const state = { i: GUN != null ? Math.max(0, (GUN - 60) * HZ) : 0, playing: false, speed: SESSION.speed, follow: null, trail: SESSION.trail, loop: SESSION.loop, trailMode: SESSION.trailMode,
   view: { cx: 0, cy: 0, scale: 1 }, userMoved: false };
 const SPEEDS = [1, 5, 10, 30, 60];
 const TRAILS = [[30, "Trail 30 s"], [120, "Trail 2 min"], [600, "Trail 10 min"], [Infinity, "Trail full"]];
@@ -443,12 +462,12 @@ function draw() {
   // trails: width shows pace (% of target speed for the race's average wind) when it is known
   for (const b of boats) {
     const a = state.trail === Infinity ? 0 : Math.max(0, ii - Math.round(state.trail * HZ));
-    if (state.paceTrail && b.track.pace) {
+    if (state.trailMode !== "plain" && (state.trailMode === "vmg" ? b.track.vmg : b.track.pace)) {
       ctx.strokeStyle = col(b); ctx.lineCap = "round";
       const step = state.trail === Infinity || state.trail > 600 ? 2 : 1;
       for (let i = a + step; i <= ii; i += step) {
         if (!b.ok[i] || !b.ok[i - step]) continue;
-        const pc = b.track.pace[i];
+        const pc = trailPct(b, i);
         ctx.globalAlpha = (done(b) ? 0.5 : 1) * (0.3 + 0.7 * (i - a) / Math.max(1, ii - a));
         ctx.lineWidth = paceWidth(pc);
         ctx.beginPath(); ctx.moveTo(sx(b.x[i - step]), sy(b.y[i - step])); ctx.lineTo(sx(b.x[i]), sy(b.y[i])); ctx.stroke();
@@ -463,7 +482,7 @@ function draw() {
     }
     ctx.globalAlpha = 1;
   }
-  if (state.paceTrail && HAS_PACE) paceLegend();
+  if (state.trailMode !== "plain") paceLegend();
   // boats
   boats.forEach((b, k) => {
     const p = at(b, state.i); if (!p) return;
@@ -485,9 +504,10 @@ function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 +
 function paceLegend() {
   const x = 18, y = H - 128;
   ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "left";
-  ctx.fillText("TRAIL WIDTH = PACE", x, y);
+  const vm = state.trailMode === "vmg";
+  ctx.fillText(vm ? "TRAIL WIDTH = VMG" : "TRAIL WIDTH = PACE", x, y);
   ctx.font = "500 11px " + cssv("--f-data");
-  ctx.fillText(GUN != null && raceT(state.i) < 0 ? `% of upwind target, ${R.sides ? R.sides.tws_ref : "?"} kt` : `% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
+  ctx.fillText(vm ? `% of avg (${fmtNum(VMG_REF.up, 1)} up, ${fmtNum(VMG_REF.down, 1)} down kt)` : GUN != null && raceT(state.i) < 0 ? `% of upwind target, ${R.sides ? R.sides.tws_ref : "?"} kt` : `% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
   [[80, "80%"], [100, "100%"], [150, "150%"]].forEach(([pc, t], k) => {
     const yy = y + 32 + k * 15;
     ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = paceWidth(pc);
@@ -701,9 +721,10 @@ function refresh() {
 $("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = SESSION.trail = t[0]; $("trail").textContent = t[1]; draw(); };
 { const t = TRAILS.find(t => t[0] === state.trail); if (t) $("trail").textContent = t[1]; }
 $("fit").onclick = () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); };
-$("paceBtn").hidden = !HAS_PACE;
-$("paceBtn").setAttribute("aria-pressed", String(state.paceTrail));
-$("paceBtn").onclick = () => { state.paceTrail = SESSION.paceTrail = !state.paceTrail; $("paceBtn").setAttribute("aria-pressed", String(state.paceTrail)); draw(); };
+function showTrailMode() { const m = TRAIL_MODES.find(m => m[0] === state.trailMode) || ["plain", "Plain trail"]; $("paceBtn").textContent = m[1]; $("paceBtn").setAttribute("aria-pressed", String(m[0] !== "plain")); }
+$("paceBtn").hidden = TRAIL_MODES.length < 2;
+showTrailMode();
+$("paceBtn").onclick = () => { const j = TRAIL_MODES.findIndex(m => m[0] === state.trailMode); state.trailMode = SESSION.trailMode = TRAIL_MODES[(j + 1) % TRAIL_MODES.length][0]; showTrailMode(); draw(); };
 $("loop").onclick = () => { state.loop = SESSION.loop = !state.loop; $("loop").setAttribute("aria-pressed", String(state.loop));
   if (state.loop && SESSION.cycle) { SESSION.cycle = false; $("cycle").setAttribute("aria-pressed", "false"); } };
 $("cycle").hidden = RACES.length < 2;
@@ -786,13 +807,16 @@ function renderDebrief() {
     const multi = DAY.races.some(r => r.boats > 1);
     const fmtT = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     const moved = c => { const parts = []; for (const [k, lbl] of [["windward", "W"], ["leeward", "L"]]) { const d = c[k + "_moved_m"]; if (d != null && d >= 30) parts.push(lbl + " " + d + " m"); } return parts.length ? parts.join(", ") : "—"; };
-    h += `<div><h2>${esc(DAY.title)}</h2><p class="note">${DAY.races.length} races found${DAY.races.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. Course change lists marks that moved 30 m or more since the race before. Click a race to open it.</p>
-    <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Tide</th><th>Course</th><th>Course change</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
+    h += `<div><h2>${esc(DAY.title)}</h2><p class="note">${DAY.races.length} races found${DAY.races.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. A course in amber had a mark move 30 m or more since the race before (hover for which); a course in pink changed type, like W to W2. Click a race to open it.</p>
+    <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Tide</th><th>Course</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
     const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
-    for (const r of DAY.races) {
-      const c = r.course || {};
-      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebbing" : "Flooding") : "—"}</td><td>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}${r.gate ? ` <span style="color:var(--muted)">gate</span>` : ""}</td><td class="${moved(c) !== "—" ? "flag" : ""}">${moved(c)}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
-    }
+    DAY.races.forEach((r, j) => {
+      const c = r.course || {}, prevL = j ? DAY.races[j - 1].course_letter : null;
+      const typeChange = j > 0 && r.course_letter && prevL && r.course_letter !== prevL;
+      const mv = moved(c), cc = typeChange ? "ctype" : mv !== "—" ? "cmoved" : "";
+      const ctitle = [typeChange ? `Course changed from ${prevL} to ${r.course_letter}` : "", mv !== "—" ? "Moved: " + mv : ""].filter(Boolean).join(" · ");
+      h += `<tr class="jumprace${r.race - 1 === K ? " here" : ""}" data-k="${r.race}"><td>Race ${r.race}${r.race - 1 === K ? " ·" : ""}</td><td>${r.estimated ? "≈ " : ""}${fmtT(r.start_ms)}</td><td>${r.elapsed_s != null ? fmtClock(r.elapsed_s) : "—"}</td>${multi ? `<td>${esc(r.winner)}</td>` : ""}<td>${r.twd ?? "—"}°</td><td>${r.tws != null ? `≈ ${Math.round(r.tws)} kt <span style="color:var(--muted)">(${Math.round(r.tws_lo)}–${Math.round(r.tws_hi)})</span>` : "—"}</td><td>${r.tide ? (r.tide.state === "ebb" ? "Ebbing" : "Flooding") : "—"}</td><td class="${cc}"${ctitle ? ` title="${esc(ctitle)}"` : ""}>${r.course_letter ? `<b>${esc(r.course_letter)}</b> ` : ""}${c.length_m ? c.length_m + " m" : "—"}${r.gate ? ` <span class="gt">gate</span>` : ""}</td><td class="${r.up_vmg === bu ? "best" : ""}">${fmtNum(r.up_vmg, 2)}</td><td class="${r.dn_vmg === bd ? "best" : ""}">${fmtNum(r.dn_vmg, 2)}</td><td>${r.tacks}</td><td>${r.tack_loss_m != null ? r.tack_loss_m.toFixed(1) + " m" : "—"}</td></tr>`;
+    });
     h += `</tbody></table></div></div>`;
   }
   h += `<div><h2>${esc(M.title)} results</h2>${notes}<p class="note">Wind ${M.twd_global ?? "—"}° (${esc(srcText)}). Speeds in knots, VMG is speed made good toward the wind upwind and away from it downwind. ${boats.length > 1 ? "Green marks the best in the fleet." : ""}${boats[0].summary.heading_offset != null && boats.length === 1 ? ` Upwind the boat tracked ${Math.abs(boats[0].summary.up_leeway ?? 0).toFixed(0)}° below its heading (leeway plus current). The Atlas reads ${Math.abs(boats[0].summary.heading_offset).toFixed(0)}° off the centreline; the replay corrects for it.` : ""}</p>
