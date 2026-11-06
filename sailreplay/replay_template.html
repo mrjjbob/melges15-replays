@@ -473,7 +473,8 @@ function draw() {
 const FIN_GREY = "#5d7280";
 // the penalty a boat is sorting out at time fi (index), if any
 const penAt = (b, fi) => { const t = fi / HZ; return (b.penalties || []).find(p => t >= p.t0 && t <= p.t1) || null; };
-const PEN_TAG = { recall: "Going back", turns: "Penalty turn", mark: "Mark turn" };
+// being over the line at the gun is not shown as a penalty: only turning back to restart is
+const PEN_TAG = { recall: "OCS · going back", turns: "Penalty turn", mark: "Mark turn" };
 function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 + (pc - 60) * 0.049)); }
 function paceLegend() {
   const x = 18, y = H - 128;
@@ -616,10 +617,9 @@ function updateFleet() {
     if (fin) c.gap.textContent = fmtClock(r.b.summary.elapsed_s ?? 0);
     else if (GUN != null && rt >= 0 && p && n > 0) c.gap.textContent = "−" + Math.max(0, Math.round(leadMg - p.mg)) + " m";
     else c.gap.textContent = "";
-    const ocs = r.b.start?.ocs && rt >= 0 && rt < 25;
     const pen = !fin && penAt(r.b, state.i);
     c.el.classList.toggle("pen", !!pen);
-    const md = fin ? ["fin", "Finished"] : pen ? ["pen", PEN_TAG[pen.kind] || "Penalty"] : ocs ? ["ocs", "Over early"] : p ? ({ up: ["up", "Upwind"], down: ["down", "Downwind"], reach: ["", "Reach"], slow: ["", "Slow"] }[p.mode] || ["", ""]) : ["", "No data"];
+    const md = fin ? ["fin", "Finished"] : pen ? ["pen", PEN_TAG[pen.kind] || "Penalty"] : p ? ({ up: ["up", "Upwind"], down: ["down", "Downwind"], reach: ["", "Reach"], slow: ["", "Slow"] }[p.mode] || ["", ""]) : ["", "No data"];
     c.tag.className = "mode " + md[0]; c.tag.textContent = md[1];
     c.v.sog.innerHTML = p ? fmtNum(p.sog) + "<small>kt</small>" : "—";
     c.v.vmg.innerHTML = p && p.vmg != null ? fmtNum(p.vmg) + "<small>kt</small>" : "—";

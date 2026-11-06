@@ -47,7 +47,7 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 
 A boat shows red (its card and its name on the map) while it looks to be sorting out a penalty:
 
-- **Going back:** soon after the start it sails back below the line (20 m or more, downwind for 12 s or more), until it is sailing upwind again. If most of the fleet goes back it is treated as a general recall and nobody is marked.
+- **OCS, going back:** soon after the start it turns back below the line (20 m or more, downwind for 12 s or more) and restarts; red until it is sailing upwind again. Being over the line at the gun without turning back is not marked. If most of the fleet goes back it is a general recall and nobody is marked. With race timers, a gun followed by another within 15 minutes, with the fleet staying within 300 m of the line in between, is treated as a general recall and the race starts at the second gun.
 - **Penalty turn:** a full circle one way inside 45 seconds (two in a row count as two turns), until the boat is back up to speed. Next to a mark it shows as a mark turn.
 
 These are guesses from GPS against estimated lines and marks, and many penalties are taken without a log showing them, so each one only stays red for a short time (at most about a minute and a half) and they never change the results.

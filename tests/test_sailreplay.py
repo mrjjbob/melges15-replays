@@ -407,3 +407,19 @@ def test_penalties_recall_and_turns():
     # a clean start has nothing
     s = _track([0.0] * 300, [4.0] * 300)
     assert analysis._penalties(s, hz, 0, None, np.full(300, 4.0), s.y.copy(), []) == []
+
+
+def test_general_recall_gun_is_dropped(tmp_path):
+    import make_demo_race
+    make_demo_race.simulate(tmp_path, timers=True, course="W")
+    boats = [(p.stem, vkx.parse_file(p)) for p in sorted(tmp_path.glob("*.vkx"))]
+    G = make_demo_race.GUN_MS
+    # a gun 7 minutes earlier, while the fleet was milling about near the line: a general recall
+    boats[0][1].timer.append({"t": G - 420_000, "event": "race_start", "value_s": 0})
+    races = analysis.find_races(boats)
+    assert [r["start_ms"] for r in races] == [G]
+    # a gun 14 minutes after a real race is a new race, and the real race stays
+    boats[0][1].timer[:] = [e for e in boats[0][1].timer if e["t"] != G - 420_000]
+    boats[0][1].timer.append({"t": G + 14 * 60_000, "event": "race_start", "value_s": 0})
+    races = analysis.find_races(boats)
+    assert races and races[0]["start_ms"] == G

@@ -327,6 +327,39 @@ def _course_letter(c, s, p, hz, twa=None):
     return {(1, -1): "L", (1, -1, 1): "W", (1, -1, 1, -1): "Z", (1, -1, 1, -1, 1): "W2"}.get(seq, ""), None
 
 
+def _max_excursion_m(boats, t0, t1) -> float:
+    best = 0.0
+    for _, log in boats:
+        pts = [(r["lat"], r["lon"]) for r in log.track if t0 <= r["t"] <= t1]
+        if len(pts) < 2:
+            continue
+        la0, lo0 = pts[0]
+        ml = 111_320 * math.cos(math.radians(la0))
+        best = max(best, max(math.hypot((lo - lo0) * ml, (la - la0) * 111_320) for la, lo in pts))
+    return best
+
+
+def _drop_general_recalls(races: list[dict], boats) -> list[dict]:
+    """A general recall shows up as a gun followed by another gun a few minutes later, with the
+    fleet coming back in between. Drop a timer gun when the next one is within 15 minutes, nobody
+    stopped their timer between them, nobody's sailing shows a race (beat then run) starting from
+    it, and no boat got further than 300 m from where it was at the gun (a race goes to the
+    windward mark and back)."""
+    if len(races) < 2:
+        return races
+    chains = [c["start_ms"] for _, log in boats for c in _course_chains(log)]
+    keep = []
+    for r, nxt in zip(races, races[1:] + [None]):
+        g = r["start_ms"]
+        if nxt and nxt["start_ms"] - g < 15 * 60_000 and not r["finish"]:
+            raced = any(g - 60_000 <= c <= g + 180_000 for c in chains)
+            if not raced and _max_excursion_m(boats, g, nxt["start_ms"]) < 300:
+                r["general_recall"] = True
+                continue
+        keep.append(r)
+    return keep
+
+
 def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
     """All races in a set of logs. Uses the Atlas race timer when anyone used it,
     otherwise spots races from the sailing (beat, run, ... with no long stop)."""
@@ -350,6 +383,7 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
                     break
             if sailed:
                 races.append({"start_ms": g, "estimated": False, "finish": fin, "marks": [], "source": "timer"})
+        races = _drop_general_recalls(races, boats)
         if races:
             return races
     found = []                                       # (start, name, chain)
@@ -683,7 +717,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
                                        marks_xy=marks_xy))
     # most of the fleet going back is a general recall (or a postponed start), not individual recalls
     rec = [b for b in out_boats if any(p["kind"] == "recall" for p in b["penalties"])]
-    if len(out_boats) >= 3 and len(rec) > len(out_boats) / 2:
+    if (len(out_boats) >= 3 and len(rec) > len(out_boats) / 2) or (len(out_boats) == 2 and len(rec) == 2):
         for b in rec:
             b["penalties"] = [p for p in b["penalties"] if p["kind"] != "recall"]
 
