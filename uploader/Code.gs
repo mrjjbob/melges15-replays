@@ -13,6 +13,8 @@
  *   BRANCH          main
  *   SITE_URL        https://mrjjbob.github.io/melges15-replays/
  *   UPLOAD_PASSWORD the fleet password for the web page (leave empty for none)
+ *   MAIL_TO         optional: only handle mail sent to this address, e.g. you+melges15@gmail.com,
+ *                   so the script can run on your own Gmail and leave the rest of it alone
  */
 
 const MAX_BYTES = 40 * 1024 * 1024;
@@ -88,7 +90,8 @@ function sailIn_(text) {
 
 function checkMail() {
   const me = Session.getEffectiveUser().getEmail().toLowerCase();
-  const threads = GmailApp.search('in:inbox is:unread newer_than:7d', 0, 20);
+  const only = prop_('MAIL_TO', '');
+  const threads = GmailApp.search((only ? 'to:' + only : 'in:inbox') + ' is:unread newer_than:7d', 0, 20);
   threads.forEach(th => {
     th.getMessages().forEach(msg => {
       if (!msg.isUnread() || msg.isInTrash()) return;
@@ -129,7 +132,7 @@ function doGet() {
   const t = HtmlService.createTemplateFromFile('Upload');
   t.boats = fleet_();
   t.site = prop_('SITE_URL', '');
-  t.email = Session.getEffectiveUser().getEmail();
+  t.email = prop_('MAIL_TO', '') || Session.getEffectiveUser().getEmail();
   t.needPassword = !!prop_('UPLOAD_PASSWORD', '');
   return t.evaluate()
     .setTitle('Upload your race')

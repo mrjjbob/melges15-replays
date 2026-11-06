@@ -9,7 +9,9 @@ Both run as a small Google Apps Script on a Gmail account set up for the fleet. 
 
 ## Set it up (about 15 minutes, once)
 
-1. **Make a Gmail account for the fleet**, for example `cyc.melges15.uploads@gmail.com`. This becomes the address sailors send to.
+1. **Pick the address sailors send to.** Either:
+   - a Gmail account just for the fleet, for example `cyc.melges15.uploads@gmail.com`, or
+   - **your own Gmail with a "+" address**, for example `you+melges15@gmail.com`. Mail to it arrives in your normal inbox, and with `MAIL_TO` set (step 4) the script only ever touches mail sent to that address. Use this if Google will not let you make another account. Do every step below signed in to your own Gmail.
 
 2. **Make a GitHub token** (signed in as the repository owner): github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
    - Repository access: **Only select repositories** → `melges15-replays`
@@ -17,7 +19,7 @@ Both run as a small Google Apps Script on a Gmail account set up for the fleet. 
    - Expiration: up to a year (put a reminder in your calendar to renew it)
    - Copy the token.
 
-3. **Create the script** (signed in as the fleet Gmail): go to script.google.com → **New project**, and name it "Fleet uploader".
+3. **Create the script** (signed in to the Gmail from step 1): go to script.google.com → **New project**, and name it "Fleet uploader".
    - Replace everything in `Code.gs` with this folder's `Code.gs`.
    - **+ → HTML**, name it `Upload` exactly, and paste in this folder's `Upload.html`.
 
@@ -30,6 +32,7 @@ Both run as a small Google Apps Script on a Gmail account set up for the fleet. 
    | `BRANCH` | `main` |
    | `SITE_URL` | `https://mrjjbob.github.io/melges15-replays/` |
    | `UPLOAD_PASSWORD` | a fleet password for the upload page (optional) |
+   | `MAIL_TO` | only with your own Gmail: the "+" address, e.g. `you+melges15@gmail.com` |
 
 5. **Turn on email checking**: back in the editor choose the `setup` function and press **Run**. Google asks for permission. Because this is your own script it says "Google hasn't verified this app": choose **Advanced → Go to Fleet uploader** and **Allow**.
 
@@ -55,3 +58,5 @@ A file that is already there is not added twice. Anything that is not a `.vkx` f
 - In the script editor, **Executions** lists every mail check and upload, with any error.
 - "GitHub said 401": the token has expired or was pasted wrong. Make a new one (step 2) and update `GITHUB_TOKEN`.
 - To stop it: Triggers (clock icon) → delete the `checkMail` trigger, and Deploy → Manage deployments → archive the web app.
+
+Tip for the "+" address: in Gmail make a filter for mail to `you+melges15@gmail.com` → Skip the Inbox and apply a label "Fleet uploads". The script still finds it, and your inbox stays clean.
