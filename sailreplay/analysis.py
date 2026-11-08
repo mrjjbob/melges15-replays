@@ -135,7 +135,12 @@ def find_guns(logs: list[VkxLog]) -> list[int]:
     out = []
     for g in guns:
         synced = [t for t, sy in g if sy]
-        out.append(int(np.median(synced if synced else [t for t, _ in g])))
+        alltimes = [t for t, _ in g]
+        # with three or more timers the middle one is safest; with fewer, trust a synced one
+        if len(alltimes) >= 3:
+            out.append(int(np.median(alltimes)))
+        else:
+            out.append(int(np.median(synced if synced else alltimes)))
     return out
 
 
@@ -206,7 +211,7 @@ def _turns_from_cog(cog, sog, hz):
 
 
 # --------------------------------------------------------------------------- race detection
-def _course_chains(log: VkxLog, hz: float = 1.0):
+def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
     """Find races in one boat's log from how it sails: a beat, then a run, then more legs,
     with no long pause in between. Returns a list of dicts with start/finish ms and legs."""
     if len(log.track) < 600:
@@ -263,9 +268,17 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
         ang = math.degrees(math.acos(max(-1.0, min(1.0, -(px * nx + py * ny) / (lp * ln)))))
         return ang <= 55 and ln <= 3.0 * lp
 
+    def new_start(L):
+        # a beat that sets off right at a race-timer gun is the start of a new race, even when the
+        # boat sailed straight from the last finish into the next start
+        if not guns or L[0] != 1:
+            return False
+        t = grid[L[1]]
+        return any(g - 150_000 <= t <= g + 30_000 for g in guns)
+
     chains, cur = [], []
     for L in merged:
-        if cur and L[0] != cur[-1][0] and joined(cur[-1], L) and same_course(cur[-1], L):
+        if cur and L[0] != cur[-1][0] and joined(cur[-1], L) and same_course(cur[-1], L) and not new_start(L):
             cur.append(L)
         else:
             if cur:
@@ -420,7 +433,7 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
     if guns:
         timer = _timer_races(boats, guns)
         if timer:
-            return _with_courses(timer, _course_races(boats), boats)
+            return _with_courses(timer, _course_races(boats, guns), boats)
     return _course_races(boats)
 
 
@@ -577,11 +590,11 @@ def _made_ground_upwind(boats, t0, t1, twd) -> float:
     return best
 
 
-def _course_races(boats) -> list[dict]:
+def _course_races(boats, guns=None) -> list[dict]:
     races = []
     found = []                                       # (start, name, chain)
     for name, log in boats:
-        for c in _course_chains(log):
+        for c in _course_chains(log, guns=guns):
             found.append((c["start_ms"], name, c))
     found.sort(key=lambda f: f[0])
     for st, name, c in found:
@@ -600,8 +613,10 @@ def _course_races(boats) -> list[dict]:
         chains = r.pop("_chains")
         best = max(chains, key=lambda c: len(c["legs"]))
         r["legs"] = best["legs"]
+        # the course is the one the boat that sailed the most legs sailed (another boat's log can
+        # miss a short last beat); otherwise the most common one
         letters = [c.get("course") for c in chains if c.get("course")]
-        r["course_letter"] = max(set(letters), key=letters.count) if letters else ""
+        r["course_letter"] = best.get("course") or (max(set(letters), key=letters.count) if letters else "")
         r["twd"] = circ_mean([c["twd"] for c in chains])
         # marks: average each boat's rounding spot for the same mark
         marks = []
