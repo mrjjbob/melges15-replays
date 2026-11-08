@@ -4,7 +4,7 @@
     {"sail": "900", "name": "Hafen", "skipper": "Max Hafen", "serials": ["0228005931"], "aliases": ["Max Hafen"]},
     {"sail": "302", "name": "Rubel", "serials": [], "aliases": []},
     {"sail": "214", "name": "Adwar", "serials": [], "aliases": []},
-    {"sail": "270", "name": "Simkins", "serials": [], "aliases": ["Glackin"]},
+    {"sail": "270", "name": "Glackin", "serials": [], "aliases": ["Simkins"]},
     {"sail": "602", "name": "Cuzzocrea", "serials": [], "aliases": []},
     {"sail": "273", "name": "Scarpulla", "serials": [], "aliases": []},
     {"sail": "362", "name": "Rulli", "serials": [], "aliases": ["Lofredo"]},
