@@ -496,7 +496,54 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
                     r["marks"].insert(i + 1, {"kind": "leeward", "lat": lw[0], "lon": lw[1], "boats": 1, "t": lw[2]})
                 seq = tuple(1 if x == "up" else -1 for x in r["legs"])
                 r["course_letter"] = _course_letter([(x,) for x in seq], None, None, None)[0] or r["course_letter"]
+        if pinged and r.get("legs") and r["legs"][-1] == "up":
+            _finish_at_pinged_line(r, boats)
     return timer
+
+
+def _pinged_line(boats, g):
+    pins = [e for _, log in boats for e in log.line if e["end"] == "pin" and e["t"] <= g]
+    rcs = [e for _, log in boats for e in log.line if e["end"] == "boat" and e["t"] <= g]
+    if not pins or not rcs:
+        return None
+    return max(pins, key=lambda e: e["t"]), max(rcs, key=lambda e: e["t"])
+
+
+def _finish_at_pinged_line(r, boats):
+    """With the start line pinged, the upwind finish is where each boat crosses that line (and its
+    run on past the committee boat) going upwind after its last leeward rounding. That beats a
+    timer stopped early or late, and a guess from the speed."""
+    pl = _pinged_line(boats, r["start_ms"])
+    wm = [m["t"] for m in r.get("marks", []) if m["kind"] == "windward" and "t" in m]
+    if not pl or not wm:
+        return
+    pin, rc = pl
+    lat0 = rc["lat"]
+    ml = 111_320 * math.cos(math.radians(lat0))
+    px, py = (pin["lon"] - rc["lon"]) * ml, (pin["lat"] - rc["lat"]) * 111_320
+    L = math.hypot(px, py)
+    if L < 5:
+        return
+    ux, uy = math.sin(math.radians(r["twd"])), math.cos(math.radians(r["twd"]))
+    nx, ny = -py / L, px / L                           # normal to the line, pointing upwind
+    if nx * ux + ny * uy < 0:
+        nx, ny = -nx, -ny
+    t_wm = max(wm)
+    for name, log in boats:
+        pts = [p for p in log.track if t_wm - 120_000 <= p["t"] <= t_wm + 12 * 60_000]
+        if len(pts) < 30:
+            continue
+        d = np.array([((p["lon"] - rc["lon"]) * ml) * nx + ((p["lat"] - rc["lat"]) * 111_320) * ny for p in pts])
+        q = np.array([((p["lon"] - rc["lon"]) * ml) * ux + ((p["lat"] - rc["lat"]) * 111_320) * uy for p in pts])
+        # this boat's windward rounding, then its leeward rounding (furthest downwind after it)
+        ts = np.array([p["t"] for p in pts])
+        early = ts <= t_wm + 120_000
+        iw = int(np.argmax(np.where(early, q, -np.inf)))
+        run = (ts >= ts[iw]) & (ts <= ts[iw] + 6 * 60_000)        # the run that follows, at most 6 min
+        il = int(np.argmin(np.where(run, q, np.inf)))
+        cross = next((i for i in range(max(il, 1), len(d)) if d[i - 1] < 0 <= d[i] and ts[i] <= ts[il] + 6 * 60_000), None)
+        if cross is not None:
+            r["finish"][name] = int(pts[cross]["t"])
 
 
 def _lowest_point(boats, t0, t1, twd):
@@ -1288,6 +1335,13 @@ def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy, over=None) -> list:
             dm = [math.hypot(s.x[mid] - mx, s.y[mid] - my) for mx, my in marks_xy]
             if min(dm) <= 45:
                 near = True
+        if near:
+            # rounding a mark is itself a big turn (often with a gybe or tack on the way in or out),
+            # so a turn at a mark only counts when it goes a full circle beyond the rounding
+            seg3 = sense * (c[a:min(end, a + int(70 * hz))] - c[a])
+            if not len(seg3) or np.max(seg3) < 330 + 180:
+                i = j + int(5 * hz)
+                continue
         label = ("Penalty turn at the mark" if near else ("Two penalty turns" if two else "Penalty turn"))
         out.append({"kind": "mark" if near else "turns", "label": label, "t0": t(a), "t1": t(min(k, a + int(90 * hz)))})
         i = k + int(5 * hz)

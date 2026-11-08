@@ -390,10 +390,14 @@ def test_penalties_recall_and_turns():
     s = _track(beat + circle + beat, [5.0] * (400 + len(circle)))
     pen = analysis._penalties(s, hz, 0, None, None, None, [])
     assert [p["kind"] for p in pen] == ["turns"] and 95 < pen[0]["t0"] < 105
-    # the same turn next to a mark is a mark penalty
+    # next to a mark a single circle is just the rounding; a circle on top of the rounding counts
     mid = 200 + len(circle) // 2
-    pen = analysis._penalties(s, hz, 0, None, None, None, [(s.x[mid] + 10, s.y[mid])])
-    assert pen[0]["kind"] == "mark"
+    assert analysis._penalties(s, hz, 0, None, None, None, [(s.x[mid] + 10, s.y[mid])]) == []
+    big = list((315 - np.arange(0, 541, 12)) % 360)
+    s2 = _track(beat + big + beat, [5.0] * (400 + len(big)))
+    mid = 200 + len(big) // 2
+    pen = analysis._penalties(s2, hz, 0, None, None, None, [(s2.x[mid] + 10, s2.y[mid])])
+    assert pen and pen[0]["kind"] == "mark"
 
     # recall: up for 15 s, back down for 30 s, then upwind again
     hd = [0.0] * 30 + [180.0] * 60 + [0.0] * 200
