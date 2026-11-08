@@ -315,7 +315,7 @@ for (const b of boats) {
   for (let i = 0; i < N; i++) { if (t.lat[i] == null) continue; b.wx[i] = (t.lon[i] - lon0) * mlon; b.wy[i] = (t.lat[i] - lat0) * mlat; b.ok[i] = 1; }
 }
 const toXY = (lat, lon) => [(lon - lon0) * mlon, (lat - lat0) * mlat];
-const line = R.line ? { pin: toXY(...R.line.pin), boat: toXY(...R.line.boat) } : null;
+const line = R.line ? { pin: toXY(...R.line.pin), boat: toXY(...R.line.boat), finish: R.line.finish ? toXY(...R.line.finish) : null } : null;
 const LE = M.line_est;
 const lineEst = LE ? { pin: toXY(...LE.pin_end), rc: toXY(...LE.rc), fin: toXY(...LE.finish_end) } : null;
 // faint coastline (OpenStreetMap), in the same metres as the tracks
@@ -449,6 +449,12 @@ function draw() {
     const a = rot(line.pin), b = rot(line.boat);
     ctx.setLineDash([6, 6]); ctx.strokeStyle = "rgba(228,238,243,0.7)"; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(sx(a[0]), sy(a[1])); ctx.lineTo(sx(b[0]), sy(b[1])); ctx.stroke(); ctx.setLineDash([]);
+    const lbl = (p, t) => { ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "center"; ctx.fillText(t, sx(p[0]), sy(p[1]) - 8); ctx.textAlign = "left"; };
+    if (line.finish) {   // the finish runs on from the committee boat; its far end is estimated
+      const f = rot(line.finish);
+      ctx.setLineDash([6, 6]); ctx.strokeStyle = "rgba(95,195,122,0.75)"; ctx.beginPath(); ctx.moveTo(sx(b[0]), sy(b[1])); ctx.lineTo(sx(f[0]), sy(f[1])); ctx.stroke(); ctx.setLineDash([]);
+      lbl([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], "START"); lbl([b[0] + (f[0] - b[0]) * 0.7, b[1] + (f[1] - b[1]) * 0.7], "FINISH");
+    }
     buoy(a, "Pin", "#ff9f40"); buoy(b, "Committee", "#e4eef3", true);
   } else if (lineEst) {
     // start and finish off one committee boat, roughly square to the course: pin ... committee boat ... finish mark

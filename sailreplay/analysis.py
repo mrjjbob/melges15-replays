@@ -122,7 +122,7 @@ def find_guns(logs: list[VkxLog]) -> list[int]:
             elif e["event"] in ("start", "sync") and e["value_s"] > 0:
                 gun = e["t"] + e["value_s"] * 1000
                 # a later sync, restart or the gun itself before this countdown ran out replaces it
-                if any(f["event"] in ("start", "sync", "race_start") and e["t"] < f["t"] <= gun for f in ev[k + 1:]):
+                if any(f["event"] in ("start", "sync", "race_start", "reset") and e["t"] < f["t"] <= gun for f in ev[k + 1:]):
                     continue
                 cands.append((gun, e["event"] == "sync"))
     cands.sort()
@@ -277,8 +277,10 @@ def _course_chains(log: VkxLog, hz: float = 1.0):
     out = []
     for c in chains:
         # a race opens with a real beat followed straight away by a real run
-        while len(c) >= 2 and not (c[0][0] == 1 and c[0][2] - c[0][1] >= 150 * hz
-                                   and c[1][0] == -1 and c[1][2] - c[1][1] >= 150 * hz):
+        # (a short run, as on a small course in a breeze, counts when another beat follows it)
+        while len(c) >= 2 and not (c[0][0] == 1 and c[0][2] - c[0][1] >= 150 * hz and c[1][0] == -1
+                                   and (c[1][2] - c[1][1] >= 150 * hz
+                                        or (c[1][2] - c[1][1] >= 75 * hz and len(c) >= 3))):
             c = c[1:]
         if len(c) < 2 or c[0][0] != 1:
             continue
@@ -416,6 +418,15 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
     guns = find_guns(logs)
     races = []
     if guns:
+        timer = _timer_races(boats, guns)
+        if timer:
+            return _with_courses(timer, _course_races(boats), boats)
+    return _course_races(boats)
+
+
+def _timer_races(boats, guns) -> list[dict]:
+    races = []
+    if guns:
         for k, g in enumerate(guns):
             nxt = guns[k + 1] if k + 1 < len(guns) else None
             fin = {}
@@ -433,8 +444,94 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
             if sailed:
                 races.append({"start_ms": g, "estimated": False, "finish": fin, "marks": [], "source": "timer"})
         races = _drop_general_recalls(races, boats)
-        if races:
-            return races
+    return races
+
+
+def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
+    """Timer races keep the gun, and take the course from the sailing: the marks, the legs and
+    the course letter of the race found from the tracks that set off with that gun.
+
+    A race_end from the timer is only used where it makes sense: a stop pressed by mistake at the
+    windward mark (before the race's last mark) is ignored, and the finish found from the sailing
+    is used instead."""
+    for r in timer:
+        g = r["start_ms"]
+        c = min((c for c in course if g - 150_000 <= c["start_ms"] <= g + 240_000),
+                key=lambda c: abs(c["start_ms"] - g), default=None)
+        if c is None:
+            continue
+        pinged = any(any(e["end"] == "pin" and e["t"] <= g for e in log.line) and
+                     any(e["end"] == "boat" and e["t"] <= g for e in log.line) for _, log in boats)
+        for k in ("legs", "course_letter", "twd", "gate"):
+            if k in c:
+                r[k] = c[k]
+        # the course marks; an estimated start/finish line only when nobody pinged the real one
+        r["marks"] = [m for m in c.get("marks", []) if pinged is False or m["kind"] in ("windward", "leeward")]
+        if not pinged:
+            for k in ("line_est", "line_basis"):
+                if k in c:
+                    r[k] = c[k]
+        last_mark = max((m.get("t", 0) for m in c.get("marks", []) if m["kind"] in ("windward", "leeward")), default=0)
+        fin = dict(c["finish"])
+        rend = dict(r["finish"])                       # race_end pressed on each boat's timer
+        for name, t in rend.items():
+            # the boat stopped its own timer: trust it if it is after the last mark and not long
+            # after the finish found from the sailing
+            cf = fin.get(name)
+            if t > last_mark + 20_000 and (cf is None or t <= cf + 180_000):
+                fin[name] = t if cf is None or t < cf else cf
+        r["finish"] = fin
+        # a last beat the sailing missed (short, or eased into the finish) but the timer saw
+        if r.get("course_letter") in COURSES and r.get("legs") and r["legs"][-1] == "down":
+            ends = [t for n, t in rend.items() if t > max(c["finish"].values(), default=0) + 45_000]
+            if ends and _made_ground_upwind(boats, max(c["finish"].values()), min(ends), r["twd"]) >= 50:
+                r["legs"] = r["legs"] + ["up"]
+                for n, t in rend.items():                # they finished when they stopped the timer
+                    if t > fin.get(n, 0):
+                        fin[n] = t
+                r["finish"] = fin
+                lw = _lowest_point(boats, max(c["finish"].values()) - 60_000, min(ends), r["twd"])
+                if lw:                                   # the leeward mark that last beat started from
+                    i = max((k for k, m in enumerate(r["marks"]) if m["kind"] in ("windward", "leeward")), default=len(r["marks"]) - 1)
+                    r["marks"].insert(i + 1, {"kind": "leeward", "lat": lw[0], "lon": lw[1], "boats": 1, "t": lw[2]})
+                seq = tuple(1 if x == "up" else -1 for x in r["legs"])
+                r["course_letter"] = _course_letter([(x,) for x in seq], None, None, None)[0] or r["course_letter"]
+    return timer
+
+
+def _lowest_point(boats, t0, t1, twd):
+    """Where a boat got furthest downwind between t0 and t1 (a leeward rounding), a few metres
+    inside its turn. (lat, lon, t) or None."""
+    ux, uy = math.sin(math.radians(twd)), math.cos(math.radians(twd))
+    for _, log in boats:
+        pts = [r for r in log.track if t0 <= r["t"] <= t1]
+        if len(pts) < 10:
+            continue
+        ml = 111_320 * math.cos(math.radians(pts[0]["lat"]))
+        d = [((p["lon"] - pts[0]["lon"]) * ml) * ux + ((p["lat"] - pts[0]["lat"]) * 111_320) * uy for p in pts]
+        j = int(np.argmin(d))
+        p = pts[j]
+        cog = p.get("cog")                             # degrees
+        la, lo = _offset(p["lat"], p["lon"], cog - 90.0, MARK_INSIDE_M)
+        return la, lo, p["t"]
+    return None
+
+
+def _made_ground_upwind(boats, t0, t1, twd) -> float:
+    ux, uy = math.sin(math.radians(twd)), math.cos(math.radians(twd))
+    best = 0.0
+    for _, log in boats:
+        pts = [r for r in log.track if t0 <= r["t"] <= t1]
+        if len(pts) < 2:
+            continue
+        ml = 111_320 * math.cos(math.radians(pts[0]["lat"]))
+        d = [((p["lon"] - pts[0]["lon"]) * ml) * ux + ((p["lat"] - pts[0]["lat"]) * 111_320) * uy for p in pts]
+        best = max(best, max(d))
+    return best
+
+
+def _course_races(boats) -> list[dict]:
+    races = []
     found = []                                       # (start, name, chain)
     for name, log in boats:
         for c in _course_chains(log):
@@ -464,7 +561,8 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
         for k, m in enumerate(best["marks"]):
             pts = [c["marks"][k] for c in chains if len(c["marks"]) > k and c["marks"][k]["kind"] == m["kind"]]
             mk = {"kind": m["kind"], "lat": float(np.mean([q["lat"] for q in pts])),
-                  "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts)}
+                  "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts),
+                  "t": int(max(q["t"] for q in pts))}
             # Leeward gate: anyone rounding to starboard means two marks. Place each by the
             # boats that rounded it; the leeward mark itself stays at the middle of the gate.
             if m["kind"] == "leeward" and any(q.get("rounded") == "starboard" for q in pts):
@@ -480,6 +578,12 @@ def find_races(boats: list[tuple[str, VkxLog]]) -> list[dict]:
         if r["marks"]:
             r["_fin0"] = dict(r["finish"])
             _fit_line(r, boats)
+            # nobody finishes before rounding the last mark: if the line fit says so, keep the
+            # finish found from the sailing
+            last = max((m.get("t", 0) for m in r["marks"] if m["kind"] in ("windward", "leeward")), default=0)
+            for n, t in list(r["finish"].items()):
+                if t < last + 20_000 and r["_fin0"].get(n, 0) > t:
+                    r["finish"][n] = r["_fin0"][n]
     races.sort(key=lambda r: r["start_ms"])
     _share_committee(races, boats)
     for r in races:
@@ -848,8 +952,11 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0, gun_i)
     _phase(out_boats, racing_each, twd_series, twd_avg, hz)
     if line is not None:
+        fin_end = _finish_from_pinged(line, series, grid, finishes, lat0, lon0, mlon, mlat)
         line = {"pin": line["pin"], "boat": line["boat"],
                 "length_m": _r(math.dist(line["pin_xy"], line["boat_xy"]), 0)}
+        if fin_end:
+            line["finish"] = fin_end
     wind_every = max(1, int(10 * hz))
     return {
         "meta": {
@@ -1071,6 +1178,32 @@ def _segments(mask_vals, min_len):
                 merged.append(r)
         runs = merged
     return runs
+
+
+def _finish_from_pinged(line, series, grid, finishes, lat0, lon0, mlon, mlat):
+    """The finish runs on from the committee boat, away from the pin (the start is to its left,
+    the finish to its right). Only the start ends get pinged, so the finish mark is placed just
+    beyond where the boats finished: at least 25 m, at most 150 m out."""
+    (px, py), (bx, by) = line["pin_xy"], line["boat_xy"]
+    L = math.hypot(bx - px, by - py)
+    if L < 5:
+        return None
+    ex, ey = (bx - px) / L, (by - py) / L              # along the line, pin -> committee -> finish
+    out = 0.0
+    for s in series:
+        f = finishes.get(s.name)
+        if f is None:
+            continue
+        # where the boat was on its way across: near the line in the last minute before finishing
+        sel = (grid >= f - 60_000) & (grid <= f + 10_000) & np.isfinite(s.x)
+        along = (s.x[sel] - bx) * ex + (s.y[sel] - by) * ey
+        perp = np.abs(-(s.x[sel] - bx) * ey + (s.y[sel] - by) * ex)
+        near = along[perp <= 40]
+        if len(near):
+            out = max(out, float(np.max(near)))
+    d = min(150.0, max(25.0, out + 15.0))
+    fx, fy = bx + ex * d, by + ey * d
+    return [lat0 + fy / mlat, lon0 + fx / mlon]
 
 
 def _penalties(s, hz, gun_i, finish_i, vmg, prog, marks_xy, over=None) -> list:
