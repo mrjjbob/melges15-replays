@@ -208,6 +208,10 @@ def test_site_builds(tmp_path):
     m = site.build_site(logs, tmp_path / "_site", site_cfg={"series": [{"name": "P1", "start": "2026-10-01"}]}, repo="a/b", log=lambda *a: None)
     assert (tmp_path / "_site" / "results.html").exists() and (tmp_path / "_site" / "index.html").exists()
     assert m["days"][0]["series"] == "P1" and m["days"][0]["races"] == 1
+    day = m["days"][0]["date"]
+    hid = site.build_site(logs, tmp_path / "_hid", site_cfg={"hidden_days": [day]}, repo="a/b", log=lambda *a: None)
+    assert hid["days"] == [] and hid["boat_count"] == 0
+    assert (tmp_path / "_hid" / "days" / f"{day}.html").exists()
 
 
 class _FakeAtlas:

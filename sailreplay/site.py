@@ -270,6 +270,9 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
             standings.append(score_series(rg["name"], rd, kind="regatta", discard_from=int(rg.get("discard_from", 5))))
     # the fleet's upload page and email (see uploader/), or else GitHub's own upload page
     upload_url = site_cfg.get("upload_url") or (f"https://github.com/{repo}/upload/{branch}/logs" if repo else None)
+    # days left off the home page ("hidden_days" in site.json); their replay pages are still built
+    hidden_days = set(site_cfg.get("hidden_days") or [])
+    home_days = [d for d in days if d["date"] not in hidden_days]
     manifest = {
         "title": site_cfg.get("title", "Race Replays"),
         "club": site_cfg.get("club", ""),
@@ -278,8 +281,8 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         "upload_page": bool(site_cfg.get("upload_url")),
         "upload_email": site_cfg.get("upload_email"),
         "repo_url": f"https://github.com/{repo}" if repo else None,
-        "days": days, "problems": problems,
-        "boat_count": len({b for d in days for b in d["boats"]}),
+        "days": home_days, "problems": problems,
+        "boat_count": len({b for d in home_days for b in d["boats"]}),
         "series": [{"name": x["name"], "start": x.get("start"), "end": x.get("end")} for x in series_cfg],
         "links": site_cfg.get("links") or [],
         "results_note": site_cfg.get("results_note", "Preliminary results from the uploaded Atlas data. Subject to change after the weekly results email."),

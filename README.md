@@ -35,7 +35,8 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 ],
 "regattas": [{"name": "New Year’s Regatta", "date": "2027-01-03"}],
 "courses": {"2026-11-08": ["W", "W", "M", "W"]},
-"labels": {"2026-03-22": "Test race"}
+"labels": {"2026-03-22": "Test race"},
+"hidden_days": ["2026-03-22"]
 ```
 
 - **Series:** a series with no `start` has not begun. One with no `end` runs until the next one starts. Set the Spring start once the Sailing Instructions are out.
@@ -43,6 +44,7 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 - **Scoring:** CYC high point (SI 13.1). One point for each boat beaten plus one. DNF scores 1, as does finishing more than ten minutes after the first boat (SI 11.2). DNC scores 0. No throw-outs in a series. Qualifying takes two days sailed (SI 13.2). Only boats that uploaded are counted, so these are **preliminary**: the weekly results email is official.
 - **Courses:** each race is labelled from its legs: W (windward–leeward–finish), W2 (twice around), L (windward–finish) or Z (finish downwind). A modified gold cup (M) reads as W2, because its wing-mark reach looks like a run sailed with one gybe. Set it from the committee's board under `courses` if it's used.
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
+- **Hidden days:** dates in `hidden_days` are left off the home page. Their replay pages are still built at `days/<date>.html`, so a direct link keeps working.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
 ### Recalls and penalty turns
