@@ -316,7 +316,6 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         "upload_url": upload_url,
         "upload_page": bool(site_cfg.get("upload_url")),
         "upload_email": site_cfg.get("upload_email"),
-        "repo_url": f"https://github.com/{repo}" if repo else None,
         "days": home_days, "problems": problems,
         "boat_count": len({b for d in home_days for b in d["boats"]}),
         "series": [{"name": x["name"], "start": x.get("start"), "end": x.get("end")} for x in series_cfg],
