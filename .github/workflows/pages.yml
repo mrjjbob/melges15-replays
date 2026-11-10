@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: pip install numpy
+        run: pip install numpy openpyxl
       - name: Build the site from logs/
         run: python -m sailreplay site logs -o _site --repo "$GITHUB_REPOSITORY" --branch "${GITHUB_REF_NAME}"
       - uses: actions/configure-pages@v5

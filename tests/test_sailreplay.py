@@ -1,3 +1,4 @@
+import json
 import math
 import numpy as np
 import struct
@@ -212,6 +213,33 @@ def test_site_builds(tmp_path):
     hid = site.build_site(logs, tmp_path / "_hid", site_cfg={"hidden_days": [day]}, repo="a/b", log=lambda *a: None)
     assert hid["days"] == [] and hid["boat_count"] == 0
     assert (tmp_path / "_hid" / "days" / f"{day}.html").exists()
+
+
+def test_official_results_replace_preliminary(tmp_path):
+    import openpyxl
+    from datetime import date, timedelta
+    import make_demo_race
+    from sailreplay import site
+    logs = tmp_path / "logs"
+    make_demo_race.simulate(logs, timers=False)
+    m = site.build_site(logs, tmp_path / "_a", site_cfg={"series": [{"name": "P1", "start": "2026-01-01"}]}, log=lambda *a: None)
+    day = date.fromisoformat(m["days"][0]["date"])
+    wb = openpyxl.Workbook(); ws = wb.active
+    rows = [[None, None, (day + timedelta(days=1)).strftime("%b. %-d, %Y")],      # typed up the next day
+            [None, "MELGES 15", 1, "TOTAL"], [None, "1 Zed", 3, 3], [None, "2 Ann", 2, 2], [None, "3 Bob", 0, 0],
+            [], [None, None, "15-18 Mph NW"], [],
+            [None, None, day.strftime("%b. %-d, %Y")], [None, "JY 15", 1, "TOTAL"], [None, "9 Jay", 1, 1]]
+    for r in rows:
+        ws.append(r)
+    (tmp_path / "results").mkdir(); wb.save(tmp_path / "results" / "scores.xlsx")
+    site.build_site(logs, tmp_path / "_b", site_cfg={"series": [{"name": "P1", "start": "2026-01-01"}]},
+                    fleet=[{"sail": "2", "name": "Annie"}], log=lambda *a: None)
+    s = (tmp_path / "_b" / "results.html").read_text()
+    res, _ = json.JSONDecoder().raw_decode(s[s.index('{"title"'):])
+    st = res["standings"][0]
+    assert [r["official"] for r in st["races"]] == [True] and st["races"][0]["date"] == day.isoformat()
+    assert st["races"][0]["weather"] == "15-18 Mph NW"
+    assert [(r["boat"], r["total"]) for r in st["rows"]] == [("1 Zed", 3), ("2 Annie", 2), ("3 Bob", 0)]
 
 
 class _FakeAtlas:

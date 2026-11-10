@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import analysis, replay, vkx
+from . import analysis, official, replay, vkx
 
 INDEX_TEMPLATE = Path(__file__).with_name("index_template.html")
 RESULTS_TEMPLATE = Path(__file__).with_name("results_template.html")
@@ -64,16 +64,26 @@ def race_points(results: list[dict], dnf_after_s: float = 600) -> tuple[dict, bo
     return out, by_mg
 
 
-def score_series(name: str, days: list[dict], *, kind: str = "series", discard_from: int = 0) -> dict:
+def score_series(name: str, days: list[dict], *, kind: str = "series", discard_from: int = 0,
+                 official_days: dict | None = None) -> dict:
     """CYC Frostbite scoring (SI 13) from what was uploaded: high point, DNC scores 0, no throw-outs
     in a series. A regatta drops each boat's worst race when five or more races are sailed (SI 13.3).
-    A boat qualifies for a series by sailing on two or more days (SI 13.2)."""
+    A boat qualifies for a series by sailing on two or more days (SI 13.2).
+    A day in `official_days` (from the club's scoring sheet) is scored from the sheet instead."""
+    official_days = official_days or {}
     races = []
     for d in sorted(days, key=lambda d: d["date"]):
+        o = official_days.get(d["date"])
+        if o:
+            for i, rn in enumerate(o["races"]):
+                races.append({"date": d["date"], "race": rn, "href": d.get("href"), "weather": o.get("weather"),
+                              "pts": {b: (v[i], None) for b, v in o["boats"].items()},
+                              "by_made_good": False, "official": True})
+            continue
         for r in d.get("race_rows", []):
             pts, by_mg = race_points(r["results"])
             races.append({"date": d["date"], "race": r["race"], "href": d.get("href"),
-                          "weather": d.get("weather"), "pts": pts, "by_made_good": by_mg})
+                          "weather": d.get("weather"), "pts": pts, "by_made_good": by_mg, "official": False})
     boats = sorted({b for r in races for b in r["pts"]})
     rows = []
     for b in boats:
@@ -90,7 +100,7 @@ def score_series(name: str, days: list[dict], *, kind: str = "series", discard_f
             worst = min(range(len(scores)), key=lambda i: (scores[i]["pts"], -i))
             scores[worst]["dropped"] = True
             net = total - scores[worst]["pts"]
-        days_sailed = len({r["date"] for r, x in zip(races, scores) if x["code"] != "DNC"})
+        days_sailed = len({r["date"] for r, x in zip(races, scores) if x["pts"] > 0 or x["code"] not in (None, "DNC")})
         rows.append({"boat": b, "scores": scores, "total": total, "net": net, "days": days_sailed,
                      "qualified": days_sailed >= 2 if kind == "series" else True})
     rows.sort(key=lambda r: (-r["net"], -r["total"], r["boat"]))
@@ -100,7 +110,7 @@ def score_series(name: str, days: list[dict], *, kind: str = "series", discard_f
             rank = k
         r["rank"] = rank
     return {"name": name, "kind": kind, "entries": len(boats), "discard_from": discard_from if kind == "regatta" else 0,
-            "races": [{k: r[k] for k in ("date", "race", "href", "weather", "by_made_good")} for r in races],
+            "races": [{k: r[k] for k in ("date", "race", "href", "weather", "by_made_good", "official")} for r in races],
             "rows": rows}
 
 
@@ -185,7 +195,7 @@ def _local_day(ms: int, tz) -> str:
 
 def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | None = None,
                site_cfg: dict | None = None, repo: str | None = None, branch: str = "main",
-               fleet: list[dict] | None = None, log=print) -> dict:
+               fleet: list[dict] | None = None, results_dir: str | Path | None = None, log=print) -> dict:
     from zoneinfo import ZoneInfo
     boats_cfg = boats_cfg or {}
     site_cfg = site_cfg or {}
@@ -258,16 +268,42 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         days.append(entry)
         log(f"{day}: {len(boats)} boat(s), {len(rs)} race(s)")
 
+    # official results from the club's scoring workbook (results/*.xlsx), when one has been added
+    by_sail = {str(b["sail"]): fleet_label(b) for b in (fleet or []) if b.get("sail")}
+    def _rename(n):
+        m = re.match(r"\s*(\d+)\b", n)
+        return by_sail.get(m.group(1), n) if m else n
+    rdir = Path(results_dir) if results_dir else logs_dir.parent / "results"
+    off, oprobs = official.load(rdir, [d["date"] for d in days], site_cfg.get("official_class", "MELGES 15"), _rename)
+    problems += oprobs
+    for day, o in off.items():
+        e = next((d for d in days if d["date"] == day), None)
+        if e is None:                               # a scored day nobody uploaded: still in the series
+            label = labels.get(day)
+            ser = None if label else series_for(day, series_cfg)
+            nice = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b %Y")
+            e = {"date": day, "title": nice + (f" · {ser['name']}" if ser else ""), "date_title": nice,
+                 "boats": [], "races": 0, "series": ser["name"] if ser else None, "label": label}
+            days.append(e)
+        e["official"] = True
+        if o["sheet_date"] != day:
+            log(f"{day}: official results dated {o['sheet_date']} on the sheet, used for {day}")
+        log(f"{day}: official results, {len(o['boats'])} boat(s), {len(o['races'])} race(s)")
+    days.sort(key=lambda d: d["date"], reverse=True)
+
+    def _has(d):
+        return d["races"] or d["date"] in off
     standings = []
     for x in series_cfg:
         if not x.get("start"):
             continue
-        sd = [d for d in days if d.get("series") == x["name"] and d["races"]]
-        standings.append(score_series(x["name"], sd, kind="series"))
+        sd = [d for d in days if d.get("series") == x["name"] and _has(d)]
+        standings.append(score_series(x["name"], sd, kind="series", official_days=off))
     for rg in site_cfg.get("regattas") or []:
-        rd = [d for d in days if d["date"] == rg.get("date") and d["races"]]
+        rd = [d for d in days if d["date"] == rg.get("date") and _has(d)]
         if rd:
-            standings.append(score_series(rg["name"], rd, kind="regatta", discard_from=int(rg.get("discard_from", 5))))
+            standings.append(score_series(rg["name"], rd, kind="regatta", discard_from=int(rg.get("discard_from", 5)),
+                                          official_days=off))
     # the fleet's upload page and email (see uploader/), or else GitHub's own upload page
     upload_url = site_cfg.get("upload_url") or (f"https://github.com/{repo}/upload/{branch}/logs" if repo else None)
     # days left off the home page ("hidden_days" in site.json); their replay pages are still built
