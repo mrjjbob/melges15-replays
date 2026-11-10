@@ -53,6 +53,8 @@ tr.p1 td.rank { color: var(--gold); }
 td.net { font: 700 20px/1 var(--f-display); color: var(--ink); }
 td .code { display: block; font: 600 10px/1 var(--f-display); letter-spacing: .1em; color: var(--muted); margin-top: 2px; }
 td.drop { color: var(--muted); }
+thead tr.days th .src { display: block; font: 600 9.5px/1.4 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+thead tr.days th .src.off { color: var(--ink); }
 thead tr.days th .wx { display: block; font: 500 10.5px/1.3 var(--f-data); letter-spacing: 0; text-transform: none; color: var(--muted); }
 tr.nq td.rank { opacity: .6; }
 td.daystart, th.daystart { border-left: 1px solid var(--rule); }
@@ -72,13 +74,13 @@ tr:last-child td { border-bottom: 0; }
   <header>
     <img class="logo" src="logo.png" alt="Melges 15">
     <span class="eyebrow" id="club"></span>
-    <h1>Preliminary results</h1>
+    <h1 id="h1">Preliminary results</h1>
   </header>
-  <div class="notice"><b>Preliminary</b><p id="note"></p></div>
+  <div class="notice"><b id="badge">Preliminary</b><p id="note"></p></div>
   <div id="series"></div>
   <div class="how">
-    <p><b>How these are scored.</b> CYC Frostbite high point (Sailing Instructions 13): a boat scores one point for each boat she beats, plus one. A boat that was out but did not finish, or finished more than ten minutes after the first boat (SI 11.2), is DNF and scores 1. No upload for a race is DNC and scores 0. There are no throw-outs in a series. A regatta drops each boat's worst race when five or more are sailed, shown in brackets. A boat qualifies for a series prize by sailing on two or more days.</p>
-    <p>Places come from the order boats crossed the finish line in their uploaded Atlas logs, and only boats that uploaded are counted, so a race scores as if the fleet were smaller. Race committee credit, solo-sailor penalties, OCS and protests are not known from the logs. The official results, emailed and posted weekly on the <a href="https://centerport-yc.org/frostbiting">CYC website</a>, always take priority.</p>
+    <p><b>How these are scored.</b> CYC Frostbite high point (Sailing Instructions 13): a boat scores one point for each boat she beats, plus one. A boat that was out but did not finish, or finished more than ten minutes after the first boat (SI 11.2), is DNF and scores 1. Not sailing a race (DNC), or being disqualified, scores 0. There are no throw-outs in a series. A regatta drops each boat's worst race when five or more are sailed, shown in brackets. A boat qualifies for a series prize by sailing on two or more days.</p>
+    <p id="prelim-how">On a Preliminary day, places come from the order boats crossed the finish line in their uploaded Atlas logs, and only boats that uploaded are counted, so a race scores as if the fleet were smaller. Race committee credit, solo-sailor penalties, OCS and protests are not known from the logs. The official results, emailed and posted weekly on the <a href="https://centerport-yc.org/frostbiting">CYC website</a>, always take priority.</p>
   </div>
   <footer class="sub" id="foot"></footer>
 </div>
@@ -90,7 +92,15 @@ const D = JSON.parse(document.getElementById("results-data").textContent);
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 $("club").textContent = D.club || "Melges 15 fleet";
-$("note").textContent = D.note;
+const allRaces = D.standings.flatMap(s => s.races);
+const nOff = allRaces.filter(r => r.official).length;
+$("note").textContent = allRaces.length && nOff === allRaces.length
+  ? "Official results from the club's scoring sheet."
+  : nOff ? D.note + " Days marked Official are from the club's scoring sheet." : D.note;
+if (allRaces.length && nOff === allRaces.length) {
+  $("h1").textContent = "Results"; $("badge").textContent = "Official"; $("prelim-how").hidden = true;
+  document.title = document.title.replace(/preliminary /i, "");
+}
 const off = (D.links || []).find(l => /result/i.test(l.label));
 if (off) $("note").insertAdjacentHTML("beforeend", ` <a href="${esc(off.url)}">Official results</a>`);
 const host = $("series");
@@ -107,9 +117,9 @@ for (const s of D.standings) {
   s.races.forEach((r, i) => { const g = groups[groups.length - 1]; if (g && g.date === r.date) g.cols.push(i); else groups.push({ date: r.date, href: r.href, cols: [i] }); });
   const dayLbl = d => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
   const reg = s.kind === "regatta";
-  let h = `<h2>${esc(s.name)}</h2><div class="sub">${reg ? "Regatta · " : ""}${s.races.length} race${s.races.length === 1 ? "" : "s"} · ${s.entries} boat${s.entries === 1 ? "" : "s"} uploaded${reg && s.discard_from && s.races.length >= s.discard_from ? " · worst race dropped" : ""}</div>`;
+  let h = `<h2>${esc(s.name)}</h2><div class="sub">${reg ? "Regatta · " : ""}${s.races.length} race${s.races.length === 1 ? "" : "s"} · ${s.entries} boat${s.entries === 1 ? "" : "s"}${s.races.every(r => r.official) ? "" : " uploaded"}${reg && s.discard_from && s.races.length >= s.discard_from ? " · worst race dropped" : ""}</div>`;
   h += `<div class="tbl"><table><thead><tr class="days"><th></th><th class="boat"></th><th></th>`;
-  for (const g of groups) h += `<th class="daystart" colspan="${g.cols.length}">${g.href ? `<a href="${g.href}">${dayLbl(g.date)}</a>` : dayLbl(g.date)}${s.races[g.cols[0]].weather ? `<span class="wx">${esc(s.races[g.cols[0]].weather)}</span>` : ""}</th>`;
+  for (const g of groups) h += `<th class="daystart" colspan="${g.cols.length}">${g.href ? `<a href="${g.href}">${dayLbl(g.date)}</a>` : dayLbl(g.date)}<span class="src${s.races[g.cols[0]].official ? " off" : ""}">${s.races[g.cols[0]].official ? "Official" : "Preliminary"}</span>${s.races[g.cols[0]].weather ? `<span class="wx">${esc(s.races[g.cols[0]].weather)}</span>` : ""}</th>`;
   h += `${reg ? '<th class="daystart"></th>' : '<th class="daystart"></th>'}</tr><tr><th>Pos</th><th class="boat l">Boat</th><th>${reg ? "W/TO" : "Total"}</th>`;
   for (const g of groups) g.cols.forEach((i, k) => { h += `<th class="${k === 0 ? "daystart" : ""}">${s.races[i].race}</th>`; });
   h += `<th class="daystart">${reg ? "Total" : "Days"}</th></tr></thead><tbody>`;
@@ -124,7 +134,7 @@ for (const s of D.standings) {
   }
   h += `</tbody></table></div>`;
   if (s.races.some(r => r.by_made_good)) h += `<div class="sub">Some races had no finishes in the logs, so their order is by distance made good and should be checked against the official results.</div>`;
-  h += `<div class="sub">Each race column shows points. The weather under each date is estimated from boat speeds.</div>`;
+  h += `<div class="sub">Each race column shows points.${s.races.some(r => !r.official) ? " Under a Preliminary date the weather is estimated from boat speeds; under an Official date it is from the scoring sheet." : " The weather under each date is from the scoring sheet."}</div>`;
   sec.innerHTML = h; host.appendChild(sec);
 }
 const up = new Date(D.updated);
