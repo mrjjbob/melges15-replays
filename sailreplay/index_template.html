@@ -211,6 +211,6 @@ if (S.problems && S.problems.length) {
   p.querySelector("ul").innerHTML = S.problems.map(x => `<li>${esc(x)}</li>`).join("");
 }
 const up = new Date(S.updated);
-$("foot").innerHTML = `Updated ${up.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}${S.repo_url ? ` · <a href="${S.repo_url}">Files on GitHub</a>` : ""} · Built with sailreplay from Vakaros Atlas logs.`;
+$("foot").innerHTML = `Updated ${up.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · Built with sailreplay from Vakaros Atlas logs.`;
 })();
 </script>
