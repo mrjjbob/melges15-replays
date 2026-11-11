@@ -22,6 +22,8 @@ from . import local, polar
 from .vkx import VkxLog
 
 KT_TO_MS = 0.514444
+# seconds before and after head to wind (tack) or dead downwind (gybe) left out of steady-sailing averages
+MANOEUVRE_WINDOW_S = {"tack": (5.0, 12.0), "gybe": (6.0, 15.0)}
 PALETTE = ["#e4572e", "#29a3e0", "#f3c613", "#5bc06b", "#b07ce8", "#ff8fb1",
            "#ffffff", "#ff9f1c", "#2ec4b6", "#c0c0c0"]
 
@@ -992,6 +994,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     # fleet wind speed estimate and the race-average wind direction
     tws_all = np.vstack([b.pop("_tws") for b in out_boats])
     racing_each = [b.pop("_racing") for b in out_boats]
+    steady_each = [b.pop("_steady") for b in out_boats]
     racing_any = np.any(np.vstack(racing_each), axis=0)
     with np.errstate(all="ignore"):
         import warnings
@@ -1011,7 +1014,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     if twd_series is not None:
         sel = racing_any if racing_any.any() else np.ones(n, bool)
         twd_avg = circ_mean(twd_series[sel])
-    sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0, gun_i)
+    sides = _pace(out_boats, racing_each, wind_speed.get("tws"), twd_avg, hz, lat0, lon0, gun_i, steady_each)
     _phase(out_boats, racing_each, twd_series, twd_avg, hz)
     if line is not None:
         fin_end = _finish_from_pinged(line, series, grid, finishes, lat0, lon0, mlon, mlat)
@@ -1473,14 +1476,40 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
     for m in man:
         m["t"] = _r(m.pop("i") / hz, 1)
 
+    # ---- steady sailing ---------------------------------------------------------------
+    # The averages (and the wind speed read from boat speed) describe the boat sailing in a straight
+    # line, so tacks, gybes, mark roundings and the acceleration off the start line are left out.
+    # On 8 Nov 2026 the fleet's tacks cost speed from head to wind to about +6 s, gybes from -2 s to
+    # +10 s; the windows below cover that with a margin, and longer when a boat was slow to recover.
+    steady = racing & np.isin(mode, ["up", "down"]) & (sog > 1.5)
+    if have_wind:
+        for m in man:
+            i = int(round(m["t"] * hz))
+            pre, post = MANOEUVRE_WINDOW_S[m["kind"]]
+            if m.get("recover_s") is not None:
+                post = max(post, min(30.0, m["recover_s"] + 4))
+            steady[max(0, i - int(pre * hz)):min(n, i + int(post * hz))] = False
+        prev = None
+        for i in range(n):                                  # mark roundings: the point of sail changes
+            x = mode[i]
+            if x in ("up", "down", "reach"):
+                if prev is not None and x != prev:
+                    steady[max(0, i - int(15 * hz)):min(n, i + int(20 * hz))] = False
+                prev = x
+    if gun_i is not None:
+        steady[gun_i:min(n, gun_i + int(20 * hz))] = False
+    if finish_i is not None:
+        steady[max(0, finish_i - int(5 * hz)):min(n, finish_i + 1)] = False
+
+    def _avg(x, m, nd=2):
+        v = np.asarray(x, float)[m]
+        v = v[np.isfinite(v)]
+        return _r(float(np.mean(v)), nd) if len(v) >= 10 * hz else None
+
     # ---- wind speed from boat speed (no sensor) ----------------------------------------
     tws_est = np.full(n, np.nan)
     if have_wind:
-        steady = racing & np.isin(mode, ["up", "down"])
-        for m in man:
-            i = int(m["t"] * hz)
-            steady[max(0, i - int(10 * hz)):min(n, i + int(20 * hz))] = False
-        sog_s = _nan_movmean(sog, int(20 * hz))
+        sog_s = _nan_movmean(np.where(steady, sog, np.nan), int(20 * hz))
         est = polar.wind_from_speed(sog_s, _nan_movmedian(np.abs(twa), int(9 * hz)))
         tws_est = np.where(steady, est, np.nan)
 
@@ -1493,16 +1522,18 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
             if l in ("-", "") or b - a < 30 * hz:
                 continue
             sl = slice(a, b)
+            st_l = np.zeros(n, bool)
+            st_l[sl] = steady[sl] if l in ("up", "down") else (racing[sl] & (sog[sl] > 1.5))
             ms = [m for m in man if a / hz <= m["t"] < b / hz and m["kind"] in ("tack", "gybe")]
             legs.append({
                 "type": {"up": "Upwind", "down": "Downwind", "reach": "Reach"}.get(l, l),
                 "start": _r(a / hz, 1), "end": _r(b / hz, 1),
                 "duration_s": _r((b - a) / hz, 0),
                 "distance_m": _r(dist[b - 1] - dist[a], 0),
-                "avg_sog": _r(np.nanmean(sog[sl])),
-                "avg_vmg": _r(np.nanmean(vmg_abs[sl])),
-                "avg_twa": _r(np.nanmean(np.abs(twa[sl])), 0),
-                "avg_heel": _r(np.nanmean(heel_lw[sl]), 1),
+                "avg_sog": _avg(sog, st_l),
+                "avg_vmg": _avg(vmg_abs, st_l),
+                "avg_twa": _avg(np.abs(twa), st_l, 0),
+                "avg_heel": _avg(heel_lw, st_l, 1),
                 **_tws_range(tws_est[sl]),
                 "manoeuvres": len(ms),
             })
@@ -1559,8 +1590,8 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         start["height_2min_m"] = _r(prog[j], 0) if have_wind else None
 
     # ---- summary ----------------------------------------------------------------------
-    up = racing & (mode == "up")
-    dn = racing & (mode == "down")
+    up = steady & (mode == "up")
+    dn = steady & (mode == "down")
     tacks = [m for m in man if m["kind"] == "tack"]
     gybes = [m for m in man if m["kind"] == "gybe"]
     summary = {
@@ -1569,13 +1600,13 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         "distance_m": _r(dist[-1], 0),
         "max_sog": _r(np.nanmax(np.where(racing, sog, np.nan)) if racing.any() else np.nan),
         "avg_sog": _r(np.nanmean(sog[racing]) if racing.any() else np.nan),
-        "up_vmg": _r(np.nanmean(vmg_abs[up]) if up.any() else np.nan),
-        "up_sog": _r(np.nanmean(sog[up]) if up.any() else np.nan),
-        "up_twa": _r(np.nanmean(np.abs(twa[up])) if up.any() else np.nan, 0),
-        "up_heel": _r(np.nanmean(heel_lw[up]) if up.any() else np.nan, 1),
-        "dn_vmg": _r(np.nanmean(vmg_abs[dn]) if dn.any() else np.nan),
-        "dn_sog": _r(np.nanmean(sog[dn]) if dn.any() else np.nan),
-        "dn_twa": _r(np.nanmean(np.abs(twa[dn])) if dn.any() else np.nan, 0),
+        "up_vmg": _avg(vmg_abs, up),
+        "up_sog": _avg(sog, up),
+        "up_twa": _avg(np.abs(twa), up, 0),
+        "up_heel": _avg(heel_lw, up, 1),
+        "dn_vmg": _avg(vmg_abs, dn),
+        "dn_sog": _avg(sog, dn),
+        "dn_twa": _avg(np.abs(twa), dn, 0),
         "tacks": len(tacks), "gybes": len(gybes),
         "tack_loss_m": _r(np.nanmedian([m["loss_m"] for m in tacks if m["loss_m"] is not None]) if tacks else np.nan, 1),
         "gybe_loss_m": _r(np.nanmedian([m["loss_m"] for m in gybes if m["loss_m"] is not None]) if gybes else np.nan, 1),
@@ -1585,7 +1616,9 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         "up_leeway": _r(leeway, 1),
     }
     if up.any():
-        summary["heel_vs_vmg"] = _heel_bins(heel_lw[up], vmg_abs[up])
+        # heel and VMG over 3 s, so a wave or a gust's roll doesn't throw a reading into the wrong bin
+        k3 = max(1, int(3 * hz))
+        summary["heel_vs_vmg"] = _heel_bins(_nan_movmean(heel_lw, k3)[up], _nan_movmean(vmg_abs, k3)[up], hz)
 
     res.update({
         "track": {
@@ -1594,15 +1627,16 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
             "heel": _r(heel_lw if have_wind else s.heel, 1),
             "twa": _r(twa, 0), "vmg": _r(vmg_abs, 2),
             "mg": _r(mg, 0), "mode": [m if m else "" for m in mode.tolist()],
+            "steady": "".join("1" if v else "0" for v in steady.tolist()),
         },
         "manoeuvres": man, "legs": legs, "start": start, "summary": summary,
         "penalties": _penalties(s, hz, gun_i, finish_i, vmg if have_wind else None, prog if have_wind else None, marks_xy or [], over),
-        "_tws": tws_est, "_racing": racing,
+        "_tws": tws_est, "_racing": racing, "_steady": steady,
     })
     return res
 
 
-def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None):
+def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None, steady_each=None):
     """Pace: boat speed as a % of Melges 15 target speed for the race's average wind, at the angle
     being sailed. Without a wind sensor the reference has to be one wind speed for the whole race;
     a boat in more breeze, or sailing well, reads over 100%, and one in a lull reads under.
@@ -1613,8 +1647,9 @@ def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None):
     rx, ry = math.cos(T), -math.sin(T)                   # to the right, looking upwind
     mlon = 111_320 * math.cos(math.radians(lat0))
     pool = {"up": ([], []), "down": ([], [])}
-    for b, racing in zip(boats, racing_each):
+    for bi, (b, racing) in enumerate(zip(boats, racing_each)):
         tr = b["track"]
+        steady = steady_each[bi] if steady_each is not None else racing
         f = lambda k: np.array([np.nan if v is None else v for v in tr[k]], float)
         sog, twa = _nan_movmean(f("sog"), int(6 * hz)), f("twa")
         # an asymmetric boat doesn't sail deeper than ~150 deg; deeper readings are mid-gybe or wind error
@@ -1638,9 +1673,10 @@ def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None):
         mode = np.array(tr["mode"], dtype=object)
         for leg in b["legs"]:
             sl = slice(int(leg["start"] * hz), int(leg["end"] * hz))
-            leg["pace"] = _r(np.nanmean(pace[sl]), 0) if np.isfinite(pace[sl]).any() else None
+            ps = pace[sl][steady[sl]] if leg["type"] in ("Upwind", "Downwind") else pace[sl]
+            leg["pace"] = _r(np.nanmean(ps), 0) if np.isfinite(ps).sum() >= 10 * hz else None
         for key, m in (("up", "up"), ("down", "down")):
-            sel = (mode == m) & np.isfinite(pace)
+            sel = (mode == m) & np.isfinite(pace) & steady
             b["summary"][f"{key}_pace"] = _r(np.nanmean(pace[sel]), 0) if sel.sum() > 20 else None
             a = (f("lon")[sel] - lon0) * mlon * rx + (f("lat")[sel] - lat0) * 111_320 * ry
             pool[key][0].extend(a.tolist())
@@ -1719,13 +1755,14 @@ def _tws_range(est):
     return {"tws": _r(mid, 1), "tws_lo": _r(lo, 1), "tws_hi": _r(hi, 1)}
 
 
-def _heel_bins(heel, vmg):
+def _heel_bins(heel, vmg, hz=1.0):
+    """Upwind VMG by heel to leeward, in 2-degree bins with at least 6 s of steady sailing each."""
     ok = ~np.isnan(heel) & ~np.isnan(vmg)
     heel, vmg = heel[ok], vmg[ok]
     out = []
-    for lo in range(-6, 22, 2):
+    for lo in range(-12, 40, 2):
         m = (heel >= lo) & (heel < lo + 2)
-        if m.sum() >= 10:
+        if m.sum() >= 6 * hz:
             out.append([lo + 1, _r(np.mean(vmg[m])), int(m.sum())])
     return out
 

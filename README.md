@@ -26,6 +26,18 @@ You need a free GitHub account. If you are not a collaborator yet, GitHub offers
 
 Anything else shows under its file name. Add each boat's Atlas serial once and its files always land in the right place.
 
+## Steady sailing and the Advanced tab
+
+Averages (upwind and downwind speed, VMG, wind angle and heel, per race and per leg), the heel-vs-VMG chart, pace and the wind speed read from boat speed all use **steady sailing** only. Each tack is left out from 5 s before head to wind to 12 s after, each gybe from 6 s before to 15 s after (longer when a boat was slow to get back up to speed), plus mark roundings, the first 20 s after the gun and the last 5 s before the finish. The windows are `MANOEUVRE_WINDOW_S` in `sailreplay/analysis.py`. Distance sailed, elapsed time and made good still use every second.
+
+Each day page has an **Advanced** tab that lays every race over each other, with race and boat filters:
+
+- Tack and gybe windows: VMG, speed, wind angle and heel from 10 s before to 30 s after, averaged per boat
+- Every start, turned so the line runs across with the course up; colour by finish place to look for a winning pattern
+- Every tack and every gybe overlaid at head to wind or dead downwind, wind up (optionally mirrored to one side)
+- Every windward or leeward rounding overlaid on the mark, with the three-length zone, speed and wind angle through it and a table of entry and exit speeds
+- Steady speed by wind angle, and upwind VMG by heel across all the races picked
+
 ## Season, scoring and courses (`site.json`)
 
 ```json

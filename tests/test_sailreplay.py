@@ -215,6 +215,27 @@ def test_site_builds(tmp_path):
     assert (tmp_path / "_hid" / "days" / f"{day}.html").exists()
 
 
+def test_averages_leave_out_manoeuvres():
+    """Upwind and downwind averages are taken over steady sailing: no seconds next to a tack or gybe."""
+    import make_demo_race
+    from sailreplay import analysis
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        make_demo_race.simulate(Path(d), timers=False)
+        boats = [(p.stem, vkx.parse_file(p)) for p in sorted(Path(d).glob("*.vkx"))]
+        r = analysis.build_day(boats)["races"][0]
+    hz = r["meta"]["hz"]
+    for b in r["boats"]:
+        st = b["track"]["steady"]
+        assert len(st) == len(b["track"]["sog"]) and "1" in st
+        for m in b["manoeuvres"]:
+            if m["kind"] in ("tack", "gybe"):
+                i = int(round(m["t"] * hz))
+                assert "1" not in st[max(0, i - int(3 * hz)):i + int(5 * hz)]
+        assert b["summary"]["heel_vs_vmg"] is None or all(len(x) == 3 for x in b["summary"]["heel_vs_vmg"])
+
+
 def test_official_results_replace_preliminary(tmp_path):
     import openpyxl
     from datetime import date, timedelta
