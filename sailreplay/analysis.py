@@ -1439,9 +1439,13 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
                 cur = math.copysign(1, a)
             committed[i] = cur
         changes = [i for i in range(1, n) if committed[i] != committed[i - 1] and committed[i - 1] != 0]
+        prev_c = 0
         for c in changes:
-            # find actual crossing near c (where twa crosses 0 or 180)
-            lo = max(1, c - int(15 * hz))
+            # find actual crossing near c (where twa crosses 0 or 180), but not further back than the
+            # previous change: two tacks inside 15 s would otherwise both find the first one's head to
+            # wind, look like a tack undone, and both be dropped
+            lo = max(1, c - int(15 * hz), prev_c + 1)
+            prev_c = c
             seg = np.abs(twa[lo:c + 1])
             if np.all(np.isnan(seg)):
                 continue
@@ -1468,8 +1472,9 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
             kind = "tack" if mb == "up" else "gybe"
             m = _manoeuvre_metrics(s, tm, kind, sog, vmg_abs, cog_s, hz, n)
             if m:
-                # drop manoeuvres that were undone quickly (wobbles)
-                if man and tm - man[-1]["i"] < 8 * hz:
+                # drop manoeuvres that were undone quickly (wobbles). A real tack takes 4-5 s, and boats
+                # do tack twice inside 8 s near a mark or a layline, so only closer pairs are wobbles.
+                if man and tm - man[-1]["i"] < 5 * hz:
                     man.pop()
                     continue
                 man.append(m)

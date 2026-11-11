@@ -1051,7 +1051,7 @@ function advPrep(k) {
   const bs = R_.boats.map(b => {
     const t = b.track, lat = num(t.lat), lon = num(t.lon), n = lat.length, x = new Float64Array(n), y = new Float64Array(n);
     for (let i = 0; i < n; i++) { x[i] = (lon[i] - lo0) * mlon; y[i] = (lat[i] - la0) * 111320; }
-    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
+    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), cog: num(t.cog), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
   });
   return (cache[k] = { k, R: R_, M: M_, hz, twdAt, xy, boats: bs, gunI: M_.gun_s != null ? Math.round(M_.gun_s * M_.hz) : null, nb: bs.length });
 }
@@ -1171,7 +1171,7 @@ function renderAdvanced() {
   h += `<div><h2>Starts</h2><div class="charts"><div class="chartcard wide"><h3>Every start</h3><p class="note">Every race's start played together, from a minute before the gun to 30 s after. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.</p>
     <div class="advplay"><button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button><input type="range" id="advStartT" min="-60" max="30" step="0.5" value="${ADV.startT}" aria-label="Time from the gun"><span class="t" id="advStartLbl"></span></div>
     <canvas id="advStarts" class="tall"></canvas><div class="legend">${advLegend(byPlace)}</div></div></div></div>`;
-  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own track: the wind is taken as halfway between its heading going in (10 s to 4 s before) and coming out (8 s to 20 s after), so a shift during the manoeuvre is taken out and every one sits square to the wind. How wide it opens is the angle the boat turned through.</p><div class="charts">
+  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own track: the wind is taken as halfway between its heading just before (6 s to 3 s) and just after (4 s to 8 s), so every one sits square to the wind and a second tack soon after doesn't pull it round. How wide it opens is the angle the boat turned through; what happens later in the 30 s is free to wander.</p><div class="charts">
     ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place")}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="advbar">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div><div class="charts">
@@ -1231,21 +1231,21 @@ function drawAdvanced() {
 
   // tacks and gybes overlaid at head to wind / dead downwind
   for (const [kind, id] of [["tack", "advTacks"], ["gybe", "advGybes"]]) {
-    // The wind for each one is halfway between the heading going in and coming out, read from the
-    // track. Each heading is read only between this boat's own manoeuvres (going in: up to 12 s before,
-    // after the previous tack, gybe or rounding has settled; coming out: from 6 s after, until the
-    // next one starts), so back-to-back tacks don't pull it round. If one side is too short to read,
-    // the other side and the fleet's median turn angle stand in. A gybe's bisector points downwind.
-    const brgOf = (B, a, b) => { while (a < b && !isFinite(B.x[a])) a++; while (b > a && !isFinite(B.x[b])) b--;
-      return b - a >= 2 && Math.hypot(B.x[b] - B.x[a], B.y[b] - B.y[a]) > 3 ? Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI : null; };
+    // The wind for each one is halfway between the heading just before (6 s to 3 s) and just after
+    // (4 s to 8 s): close in, so a second tack soon after doesn't get into it. Each window also stops
+    // short of the boat's previous or next tack, gybe or rounding. If one side can't be read, the other
+    // side and the fleet's median turn angle stand in. A gybe's bisector points downwind.
+    const cmean = (B, a, b) => { let sn = 0, cs = 0, nn = 0; for (let i = Math.max(0, Math.ceil(a)); i <= Math.min(B.n - 1, Math.floor(b)); i++) { const v = B.cog[i]; if (isFinite(v)) { sn += Math.sin(v * Math.PI / 180); cs += Math.cos(v * Math.PI / 180); nn++; } }
+      return nn >= 3 ? Math.atan2(sn, cs) * 180 / Math.PI : null; };
     const wrap = a => ((a + 540) % 360) - 180;
     const ev = advEvents(kind).map(e => { const { P, B, i0 } = e, hz = P.hz;
       const ts = B.b.manoeuvres.map(m => Math.round(m.t * hz)).filter(i => i !== i0).sort((x, y) => x - y);
       const prev = ts.filter(i => i < i0).pop(), next = ts.find(i => i > i0);
-      const a0 = Math.max(0, i0 - 12 * hz, prev != null ? prev + 6 * hz : -Infinity), a1 = i0 - 3 * hz;
-      const b0 = i0 + 6 * hz, b1 = Math.min(B.n - 1, i0 + 20 * hz, next != null ? next - 3 * hz : Infinity);
-      const bin = a1 - a0 >= 2 * hz ? brgOf(B, a0, a1) : null, bout = b1 - b0 >= 2 * hz ? brgOf(B, b0, b1) : null;
-      let tw = 0, nn = 0; for (let i = Math.max(0, i0 - 8 * hz); i < i0 - 2 * hz; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
+      const a0 = Math.max(i0 - 6 * hz, prev != null ? prev + 4 * hz : -Infinity), a1 = i0 - 3 * hz;
+      const b0 = i0 + 4 * hz, b1 = Math.min(i0 + 8 * hz, next != null ? next - 2 * hz : Infinity);
+      const bin = a1 - a0 >= 1.5 * hz ? cmean(B, a0, a1) : null, bout = b1 - b0 >= 1.5 * hz ? cmean(B, b0, b1) : null;
+      let tw = 0, nn = 0; for (let i = Math.max(0, a0); i <= a1; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
+      if (!nn) for (let i = Math.max(0, i0 - 4 * hz); i < i0 - hz; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
       return { ...e, bin, bout, side: Math.sign(tw) || 1 }; });
     const full = ev.filter(e => e.bin != null && e.bout != null).map(e => Math.abs(wrap(e.bout - e.bin))).sort((x, y) => x - y);
     const alpha = full.length ? full[Math.floor(full.length / 2)] : (kind === "tack" ? 90 : 90);
