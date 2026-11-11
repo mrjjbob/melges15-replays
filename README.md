@@ -34,7 +34,7 @@ Each day page has an **Advanced** tab that lays every race over each other, with
 
 - Tack and gybe windows: VMG, speed, wind angle and heel from 10 s before to 30 s after, averaged per boat
 - Every start, turned so the line runs across with the course up, with play, a time slider and looping; colour by finish place to look for a winning pattern
-- Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned by the boat's own entry heading (the wind is the fleet's median entry angle off it), so every boat comes in the same way and a shift shows in the exit angle. Mirroring to one side is optional
+- Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned so the wind is halfway between the boat's heading going in (10 s to 4 s before) and coming out (8 s to 20 s after), which takes out any shift during it. Mirroring to one side is optional
 - Every windward or leeward rounding overlaid on the mark, with the three-length zone, speed and wind angle through it and a table of entry and exit speeds
 - Steady speed by wind angle, and upwind and downwind VMG by heel (1° bands; bands with under 6 s of data are drawn dashed) across all the races picked
 
