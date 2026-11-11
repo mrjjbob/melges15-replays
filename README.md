@@ -39,10 +39,10 @@ Averages (upwind and downwind speed, VMG, wind angle and heel, per race and per 
 Each day page has an **Advanced** tab that lays every race over each other, with race and boat filters:
 
 - Tack and gybe windows: VMG, speed, wind angle and heel from 10 s before to 30 s after, averaged per boat
-- Every start, centred on the middle of each line and turned so the line runs across with the course up, or so each race's wind at the gun is up; with play, a time slider and looping; colour by finish place to look for a winning pattern
+- Every start, centred on the middle of each line and turned so each race's wind at the gun is up (the default) or with a level line, course up; with play, a time slider and looping; colour by finish place to look for a winning pattern
 - Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned so the wind is halfway between two straight lines, the track coming in and the track going out, each followed from close to the turn for as long as the boat held that course (to its previous or next manoeuvre, a 25° wander, or 60 s), so back-to-back tacks stay square; if one side is too short to read, the other side and the fleet's median turn angle stand in. Mirroring to one side is optional, a button steps the time shown after the turn through 30, 20 and 10 s, and the tack (or gybe) that made the most distance upwind (downwind) by the end is drawn in gold, in its boat's colour
 - Every windward or leeward rounding overlaid on the mark, with the three-length zone, the one furthest towards the next mark 30 s after in gold, speed and wind angle through it and a table of entry and exit speeds
-- Steady speed by wind angle, and upwind and downwind VMG by heel (1° bands; bands with under 6 s of data are drawn dashed) across all the races picked
+- Upwind and downwind VMG by heel (1° bands; bands with under 6 s of data are drawn dashed) across all the races picked, with a gold line at the ideal heel: where the boats' pooled VMG peaks
 
 ## Season, scoring and courses (`site.json`)
 
