@@ -34,6 +34,7 @@ POLAR = np.array([
 ])
 
 _FINE = np.arange(2.0, 22.01, 0.25)
+DOWNWIND_OFF_TABLE_KT = 18.0
 
 
 def speed(tws: float, twa: float) -> float:
@@ -64,9 +65,14 @@ def wind_from_speed(sog: np.ndarray, twa: np.ndarray) -> np.ndarray:
         tab = _table_for_angle(k)
         good = np.maximum.accumulate(tab)                  # keep it monotonic in wind speed
         v = sog[sel]
-        r = np.interp(v, good, _FINE, left=np.nan, right=np.nan)
         if k < 65:
+            r = np.interp(v, good, _FINE, left=np.nan, right=np.nan)
             r = np.where(r > 12, np.nan, r)                # upwind speed barely changes above 12 kt
+        else:
+            # downwind, faster than the table's top wind still means at least that much wind; dropping
+            # those readings would leave only the slower moments and read a planing day as lighter
+            # (capped at 18 kt: past that a boat surfing waves is faster than the table, not the wind stronger)
+            r = np.minimum(np.interp(v, good, _FINE, left=np.nan, right=DOWNWIND_OFF_TABLE_KT), DOWNWIND_OFF_TABLE_KT)
         out[sel] = r
     return out
 

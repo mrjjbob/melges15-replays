@@ -26,6 +26,12 @@ You need a free GitHub account. If you are not a collaborator yet, GitHub offers
 
 Anything else shows under its file name. Add each boat's Atlas serial once and its files always land in the right place.
 
+## Heel smoothing, wind speed and pace
+
+- **Heel** is averaged over a window set by the sea state: how much the bow pitches (slow trends removed) on each boat in each race, from 1 s at ±0.8° (flat water) to 4 s at ±2.3° (a chop). With no pitch data, wind speed sets it (1 s at 6 kt to 4 s at 16 kt). The logs are 2 Hz, too slow to measure the wave period itself. Settings: `HEEL_SMOOTH_BY_PITCH` and `HEEL_SMOOTH_BY_WIND` in `sailreplay/analysis.py`.
+- **Wind speed** from boat speed: upwind speed barely changes once a Melges 15 is powered up, so when a boat's downwind legs (at least a minute of them) say 10 kt or more, its upwind readings are left out. Downwind speeds past the target table count as at least that wind, up to 18 kt, rather than being dropped.
+- **Which side paid** is now against the fleet's own average on that point of sail (100%), so the sides compare directly whatever the target speeds get wrong. Per-boat and per-leg pace are still against target speed.
+
 ## Steady sailing and the Advanced tab
 
 Averages (upwind and downwind speed, VMG, wind angle and heel, per race and per leg), the heel-vs-VMG chart, pace and the wind speed read from boat speed all use **steady sailing** only. Each tack is left out from 5 s before head to wind to 12 s after, each gybe from 6 s before to 15 s after (longer when a boat was slow to get back up to speed), plus mark roundings, the first 20 s after the gun and the last 5 s before the finish. The windows are `MANOEUVRE_WINDOW_S` in `sailreplay/analysis.py`. Distance sailed, elapsed time and made good still use every second.
@@ -34,7 +40,7 @@ Each day page has an **Advanced** tab that lays every race over each other, with
 
 - Tack and gybe windows: VMG, speed, wind angle and heel from 10 s before to 30 s after, averaged per boat
 - Every start, centred on the middle of each line and turned so the line runs across with the course up, or so each race's wind at the gun is up; with play, a time slider and looping; colour by finish place to look for a winning pattern
-- Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned so the wind is halfway between the boat's heading just before (6 s to 3 s) and just after (4 s to 8 s), read close in and only between that boat's own manoeuvres, so back-to-back tacks stay square; if one side is too short to read, the other side and the fleet's median turn angle stand in. Mirroring to one side is optional
+- Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned so the wind is halfway between two straight lines, the track coming in and the track going out, each followed from close to the turn for as long as the boat held that course (to its previous or next manoeuvre, a 25° wander, or 60 s), so back-to-back tacks stay square; if one side is too short to read, the other side and the fleet's median turn angle stand in. Mirroring to one side is optional, a button steps the time shown after the turn through 30, 20 and 10 s, and the tack (or gybe) that made the most distance upwind (downwind) by the end is drawn in gold, in its boat's colour
 - Every windward or leeward rounding overlaid on the mark, with the three-length zone, speed and wind angle through it and a table of entry and exit speeds
 - Steady speed by wind angle, and upwind and downwind VMG by heel (1° bands; bands with under 6 s of data are drawn dashed) across all the races picked
 

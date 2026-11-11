@@ -24,6 +24,10 @@ from .vkx import VkxLog
 KT_TO_MS = 0.514444
 # seconds before and after head to wind (tack) or dead downwind (gybe) left out of steady-sailing averages
 MANOEUVRE_WINDOW_S = {"tack": (5.0, 12.0), "gybe": (6.0, 15.0)}
+# Upwind, a Melges 15 is near top speed once it is powered up, so wind read back from upwind speed is
+# mostly noise above this (a boat 0.2 kt slow reads 3 kt less wind) and biased low. When a boat's
+# downwind legs say the wind was at least this, its upwind readings are left out of the wind estimate.
+UPWIND_TWS_TRUSTED_BELOW = 10.0
 PALETTE = ["#e4572e", "#29a3e0", "#f3c613", "#5bc06b", "#b07ce8", "#ff8fb1",
            "#ffffff", "#ff9f1c", "#2ec4b6", "#c0c0c0"]
 
@@ -1002,6 +1006,10 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
             warnings.simplefilter("ignore", RuntimeWarning)
             tws_fleet = np.nanmedian(tws_all, axis=0)
     tws_smooth = _nan_movmedian(tws_fleet, int(90 * hz))
+    ok = np.isfinite(tws_smooth) & racing_any
+    if ok.sum() >= 2:                                   # upwind legs in a breeze: between the downwind readings
+        idx = np.arange(len(tws_smooth))
+        tws_smooth = np.where(np.isfinite(tws_smooth), tws_smooth, np.interp(idx, idx[ok], tws_smooth[ok]))
     tws_smooth[~racing_any] = np.nan
     wind_speed = _tws_range(tws_fleet)
     ups = [l for b in out_boats for l in b["legs"] if l["type"] == "Upwind" and l.get("tws") is not None]
@@ -1517,6 +1525,19 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         sog_s = _nan_movmean(np.where(steady, sog, np.nan), int(20 * hz))
         est = polar.wind_from_speed(sog_s, _nan_movmedian(np.abs(twa), int(9 * hz)))
         tws_est = np.where(steady, est, np.nan)
+        dn_est = tws_est[mode == "down"]
+        if np.isfinite(dn_est).sum() >= 60 * hz and np.nanmedian(dn_est) >= UPWIND_TWS_TRUSTED_BELOW:
+            tws_est = np.where(mode == "down", tws_est, np.nan)
+
+    # ---- heel, smoothed for the sea state -----------------------------------------------
+    # Waves roll the boat, so heel read twice a second is noisy in a chop. How much the bow pitches
+    # (with slow trends taken out) measures the sea, so the rougher it was the longer heel is
+    # averaged; with no pitch, wind speed stands in. Calm days keep a short window, so heel stays
+    # sensitive in light air.
+    heel_smooth_s, pitch_sd = _heel_window(s.pitch, racing & (sog > 3), hz, tws_est)
+    heel_s = _nan_movmean(s.heel, max(1, int(round(heel_smooth_s * hz))))
+    if have_wind:
+        heel_lw = -heel_s * side
 
     # ---- legs -------------------------------------------------------------------------
     legs = []
@@ -1609,6 +1630,7 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         "up_sog": _avg(sog, up),
         "up_twa": _avg(np.abs(twa), up, 0),
         "up_heel": _avg(heel_lw, up, 1),
+        "heel_smooth_s": heel_smooth_s, "pitch_sd": pitch_sd,
         "dn_vmg": _avg(vmg_abs, dn),
         "dn_sog": _avg(sog, dn),
         "dn_twa": _avg(np.abs(twa), dn, 0),
@@ -1623,13 +1645,13 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
     if up.any():
         # heel and VMG over 3 s, so a wave or a gust's roll doesn't throw a reading into the wrong bin
         k3 = max(1, int(3 * hz))
-        summary["heel_vs_vmg"] = _heel_bins(_nan_movmean(heel_lw, k3)[up], _nan_movmean(vmg_abs, k3)[up], hz)
+        summary["heel_vs_vmg"] = _heel_bins(heel_lw[up], _nan_movmean(vmg_abs, k3)[up], hz)
 
     res.update({
         "track": {
             "lat": _r(s.lat, 6), "lon": _r(s.lon, 6),
             "sog": _r(sog, 2), "cog": _r(cog_s, 0), "hdg": _r(hdg_fixed, 0),
-            "heel": _r(heel_lw if have_wind else s.heel, 1),
+            "heel": _r(heel_lw if have_wind else heel_s, 1),
             "twa": _r(twa, 0), "vmg": _r(vmg_abs, 2),
             "mg": _r(mg, 0), "mode": [m if m else "" for m in mode.tolist()],
             "steady": "".join("1" if v else "0" for v in steady.tolist()),
@@ -1694,7 +1716,11 @@ def _pace(boats, racing_each, tws_ref, twd_avg, hz, lat0, lon0, gun_i=None, stea
             continue
         lo, hi = np.percentile(a, [33.3, 66.7])
         parts = [("Left", a < lo), ("Middle", (a >= lo) & (a <= hi)), ("Right", a > hi)]
-        out[key] = [{"side": n, "pace": _r(np.nanmean(p[m]), 0), "n": int(m.sum())} for n, m in parts]
+        # against the fleet's own average on this point of sail, so the sides compare directly and an
+        # error in the target speeds (or the wind estimate) doesn't push every side over or under 100%
+        avg = float(np.nanmean(p))
+        out[key] = [{"side": n, "pace": _r(np.nanmean(p[m]) / avg * 100, 0), "pace_target": _r(np.nanmean(p[m]), 0),
+                     "n": int(m.sum())} for n, m in parts]
     return out
 
 
@@ -1758,6 +1784,28 @@ def _tws_range(est):
         return {"tws": None, "tws_lo": None, "tws_hi": None}
     lo, mid, hi = np.percentile(v, [15, 50, 85])
     return {"tws": _r(mid, 1), "tws_lo": _r(lo, 1), "tws_hi": _r(hi, 1)}
+
+
+# sea state -> heel smoothing: bow pitching (standard deviation, degrees, slow trends removed) and
+# the fallback, wind speed (kt), each mapped linearly onto a window in seconds
+HEEL_SMOOTH_BY_PITCH = ((0.8, 1.0), (2.3, 4.0))
+HEEL_SMOOTH_BY_WIND = ((6.0, 1.0), (16.0, 4.0))
+
+
+def _heel_window(pitch, mask, hz, tws=None):
+    """Seconds to average heel over, and the pitching (deg) it was judged from (None if from wind)."""
+    def lerp(x, pts):
+        (x0, y0), (x1, y1) = pts
+        return float(np.clip(y0 + (x - x0) * (y1 - y0) / (x1 - x0), y0, y1))
+    if pitch is not None and np.isfinite(pitch).sum() > 60 * hz:
+        hp = pitch - _nan_movmean(pitch, max(1, int(10 * hz)))
+        v = hp[mask & np.isfinite(hp)]
+        if len(v) > 60 * hz:
+            sd = float(np.std(v))
+            return round(lerp(sd, HEEL_SMOOTH_BY_PITCH) * 2) / 2, round(sd, 2)
+    if tws is not None and np.isfinite(tws).sum() > 30 * hz:
+        return round(lerp(float(np.nanmedian(tws)), HEEL_SMOOTH_BY_WIND) * 2) / 2, None
+    return 2.0, None
 
 
 def _heel_bins(heel, vmg, hz=1.0):
