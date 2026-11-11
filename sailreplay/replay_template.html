@@ -149,6 +149,12 @@ tr.jumprace .flag { color: var(--accent); }
 .chartcard .note { font-size: 13px; }
 .chartcard canvas { width: 100%; height: 260px; display: block; }
 .chartcard.wide { grid-column: 1 / -1; }
+.chartcard canvas.tall { height: 520px; }
+.advbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.advbar .k { font: 600 12px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); min-width: 64px; }
+.advbar .chip { background: var(--panel-2); }
+.advbar .chip i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+#advRoundTbl td.nm i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
@@ -195,6 +201,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   th:first-child, td:first-child { position: sticky; left: 0; background: var(--panel); z-index: 1; }
   th:first-child { background: var(--panel-2); }
   .chartcard canvas { height: 220px; }
+  .chartcard canvas.tall { height: 380px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -206,6 +213,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-replay" aria-selected="true">Replay</button>
       <button role="tab" id="tab-debrief" aria-selected="false">Debrief</button>
+      <button role="tab" id="tab-advanced" aria-selected="false">Advanced</button>
     </div>
     <div class="clock"><span class="lbl" id="clockLbl">Race time</span><span class="val" id="clock">0:00</span></div>
   </header>
@@ -233,6 +241,7 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
       <aside class="fleet" id="fleet"><div class="hd"><span>Fleet</span><span id="rankBy">Made good</span></div></aside>
     </section>
     <section class="debrief" id="view-debrief" hidden><div class="inner" id="debrief"></div></section>
+    <section class="debrief" id="view-advanced" hidden><div class="inner" id="advanced"></div></section>
   </main>
 
   <footer class="transport">
@@ -254,16 +263,16 @@ let ctl = null, cur = null;
 // settings that carry from race to race (cycling rebuilds the page for each race)
 const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, trailMode: "pace", loop: false, orient: "wind", notes: new Set() };
 function parseHash() {
-  const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief))?$/.exec(h);
+  const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief|advanced))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
-  return { k: cur ? cur.k : 0, view: h === "debrief" ? "debrief" : "replay" };
+  return { k: cur ? cur.k : 0, view: h === "debrief" || h === "advanced" ? h : "replay" };
 }
 function route() {
   const { k, view } = parseHash();
   if (cur && cur.k === k) { cur.api.show(view); return; }
   // switching races inside the debrief keeps your place, so one chart can be compared race to race
   const deb = document.querySelector(".debrief");
-  const keep = view === "debrief" && deb && !deb.hidden ? { win: window.scrollY, el: deb.scrollTop } : null;
+  const keep = view !== "replay" && deb && !deb.hidden ? { win: window.scrollY, el: deb.scrollTop } : null;
   if (ctl) ctl.abort();
   APP.innerHTML = APP_HTML;
   ctl = new AbortController();
@@ -278,7 +287,7 @@ route();
 
 function run(R, K, SIG, VIEW) {
 const ON = { signal: SIG };
-const hashFor = v => "r" + (K + 1) + (v === "debrief" ? "-debrief" : "");
+const hashFor = v => "r" + (K + 1) + (v === "debrief" || v === "advanced" ? "-" + v : "");
 const M = R.meta, HZ = M.hz, N = M.n, GUN = M.gun_s;
 const boats = R.boats;
 const $ = id => document.getElementById(id);
@@ -797,15 +806,18 @@ function setClock(rt) {
 
 // ---------- tabs (hash routing)
 function show(v) {
-  const deb = v === "debrief";
-  document.querySelector(".transport").hidden = deb;
-  $("view-replay").hidden = deb; $("view-debrief").hidden = !deb;
-  $("tab-replay").setAttribute("aria-selected", String(!deb)); $("tab-debrief").setAttribute("aria-selected", String(deb));
-  if (deb) { setPlaying(false); renderDebrief(); window.scrollTo(0, 0); } else requestAnimationFrame(resize);
+  const deb = v === "debrief", adv = v === "advanced", rep = !deb && !adv;
+  document.querySelector(".transport").hidden = !rep;
+  $("view-replay").hidden = !rep; $("view-debrief").hidden = !deb; $("view-advanced").hidden = !adv;
+  $("tab-replay").setAttribute("aria-selected", String(rep)); $("tab-debrief").setAttribute("aria-selected", String(deb)); $("tab-advanced").setAttribute("aria-selected", String(adv));
+  if (deb) { setPlaying(false); renderDebrief(); window.scrollTo(0, 0); }
+  else if (adv) { setPlaying(false); renderAdvanced(); window.scrollTo(0, 0); }
+  else requestAnimationFrame(resize);
   setClock(raceT(state.i));
 }
 $("tab-replay").onclick = () => { location.hash = hashFor("replay"); };
 $("tab-debrief").onclick = () => { location.hash = hashFor("debrief"); };
+$("tab-advanced").onclick = () => { location.hash = hashFor("advanced"); };
 
 // ---------- debrief
 let debriefDone = false, debriefBoat = 0;
@@ -879,7 +891,7 @@ function renderDebrief() {
   }
   h += `<div class="charts">
     <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Dashed lines are mark roundings, filled dots tacks and open dots gybes. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
-    <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward. Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+    <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward, steady sailing only (tacks and roundings left out, heel and VMG over 3 s). Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard wide"><h3>Sailing the shifts</h3><p class="note">Share of the time each boat was on the tack or gybe the current shift favours. Upwind that is the lifted tack: starboard when the wind has gone right of the race average (${R.wind.twd_avg ?? "—"}°), port when it has gone left. Downwind it is the gybe pointing closer to the leeward mark, the opposite one. Only time with the wind ${3}° or more off the average counts; 50% is what you'd get by chance. Shifts are estimated from the fleet's tacks${boats.length === 1 ? ", so with one boat they are rough" : ""}.</p><canvas id="phaseChart"></canvas><div class="legend"><span><i style="background:var(--ink)"></i>Upwind (lifted tack)</span><span><i style="background:var(--muted)"></i>Downwind (favoured gybe)</span><span><i style="background:var(--accent)"></i>50% = chance</span></div></div>
   </div>`;
 
@@ -1020,11 +1032,256 @@ function drawHeelChart() {
     let bi = 0; pts.forEach((p, n) => { if (p[1] > pts[bi][1]) bi = n; }); if (pts.length) { c.beginPath(); c.arc(X(pts[bi][0]), Y(pts[bi][1]), 4, 0, Math.PI * 2); c.fill(); } }
 }
 
+// ---------- advanced: every race of the day, for the nerds
+// Settings live on window so they survive switching races (the page is rebuilt for each race).
+const ADV = window.__ADV || (window.__ADV = { races: null, off: new Set(), colour: "boat", mirror: true, mark: "windward" });
+let advDone = false;
+function advPrep(k) {
+  const cache = window.__ADVC || (window.__ADVC = []);
+  if (cache[k]) return cache[k];
+  const R_ = RACES[k], M_ = R_.meta, hz = M_.hz, [la0, lo0] = M_.origin;
+  const mlon = 111320 * Math.cos(la0 * Math.PI / 180);
+  const num = a => Float64Array.from(a || [], v => v == null ? NaN : v);
+  const tw = R_.wind && R_.wind.twd, every = (R_.wind && R_.wind.every) || 1, tg = M_.twd_global;
+  const twdAt = i => { const v = tw ? tw[Math.min(tw.length - 1, Math.max(0, Math.floor(i / every)))] : null; return v ?? tg; };
+  const xy = (la, lo) => [(lo - lo0) * mlon, (la - la0) * 111320];
+  const bs = R_.boats.map(b => {
+    const t = b.track, lat = num(t.lat), lon = num(t.lon), n = lat.length, x = new Float64Array(n), y = new Float64Array(n);
+    for (let i = 0; i < n; i++) { x[i] = (lon[i] - lo0) * mlon; y[i] = (lat[i] - la0) * 111320; }
+    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
+  });
+  return (cache[k] = { k, R: R_, M: M_, hz, twdAt, xy, boats: bs, gunI: M_.gun_s != null ? Math.round(M_.gun_s * M_.hz) : null, nb: bs.length });
+}
+const advRaces = () => (ADV.races || RACES.map((_, k) => k)).filter(k => k < RACES.length);
+function advEach(fn) { for (const k of advRaces()) { const P = advPrep(k); for (const B of P.boats) if (!ADV.off.has(B.name)) fn(P, B); } }
+const advBoats = () => { const m = new Map(); RACES.forEach(r => r.boats.forEach(b => { if (!m.has(b.name)) m.set(b.name, b.color); })); return [...m].map(([name, color]) => ({ name, color })); };
+const placeColour = (pos, n) => n < 2 || pos == null ? C.muted : `hsl(${Math.round(125 * (1 - (pos - 1) / (n - 1)))} 70% 55%)`;
+const rotTo = (dx, dy, deg) => { const t = deg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t); return [dx * c - dy * s, dx * s + dy * c]; };
+
+// average of a value at fixed times around an event, per boat
+function advWindow(events, t0, t1, keys) {
+  const T = []; for (let s = t0; s <= t1 + 1e-9; s += 0.5) T.push(s);
+  const acc = new Map();
+  for (const { P, B, i0 } of events) {
+    let a = acc.get(B.name);
+    if (!a) { a = { name: B.name, color: B.color, n: 0, sum: {}, cnt: {} }; for (const k of keys) { a.sum[k] = new Float64Array(T.length); a.cnt[k] = new Float64Array(T.length); } acc.set(B.name, a); }
+    a.n++;
+    T.forEach((s, j) => { const i = i0 + Math.round(s * P.hz); if (i < 0 || i >= B.n) return;
+      for (const k of keys) { let v = B[k][i]; if (k === "twa") v = Math.abs(v); if (isFinite(v)) { a.sum[k][j] += v; a.cnt[k][j]++; } } });
+  }
+  const out = [...acc.values()].map(a => { const o = { name: a.name, color: a.color, n: a.n }; for (const k of keys) o[k] = T.map((_, j) => a.cnt[k][j] >= Math.max(1, a.n * 0.5) ? a.sum[k][j] / a.cnt[k][j] : NaN); return o; });
+  return { T, series: out };
+}
+function advLines(id, T, series, key, yl, note) {
+  const [cv, c, w, h] = chartCanvas(id);
+  const vals = series.flatMap(s => s[key]).filter(isFinite);
+  if (!vals.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(note || "None in the races picked.", 50, 40); return; }
+  let y0 = Math.min(...vals), y1 = Math.max(...vals); const pad = Math.max(0.2, (y1 - y0) * 0.08); y0 -= pad; y1 += pad;
+  const [X, Y, L, B, Tp] = axes(c, w, h, T[0], T[T.length - 1], y0, y1, "s from " + (note || "event"), yl);
+  c.strokeStyle = "rgba(242,179,61,.55)"; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(0), Tp); c.lineTo(X(0), h - B); c.stroke(); c.setLineDash([]);
+  for (const s of series) { c.strokeStyle = s.color; c.lineWidth = 2; c.beginPath(); let on = false;
+    s[key].forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(T[j]), Y(v)); else { c.moveTo(X(T[j]), Y(v)); on = true; } }); c.stroke(); }
+}
+// tracks overlaid in a frame of their own: metres, wind (or the course side) up
+function advOverlay(id, paths, opt = {}) {
+  const [cv, c, w, h] = chartCanvas(id);
+  c.fillStyle = cssv("--water"); c.fillRect(0, 0, w, h);
+  const pts = paths.flatMap(p => p.pts).filter(p => isFinite(p[0]) && isFinite(p[1])).concat(opt.extent || []);
+  if (!paths.length || !pts.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(opt.empty || "None in the races picked.", 20, 30); return; }
+  const xs = pts.map(p => p[0]).sort((a, b) => a - b), ys = pts.map(p => p[1]).sort((a, b) => a - b);
+  const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.round(f * (a.length - 1))))];
+  let x0 = q(xs, .005), x1 = q(xs, .995), y0 = q(ys, .005), y1 = q(ys, .995);      // a stray track doesn't shrink the rest
+  if (opt.centre) { const r = Math.max(Math.abs(x0), Math.abs(x1)); x0 = -r; x1 = r; }
+  const pw = (x1 - x0) || 10, ph = (y1 - y0) || 10, m = 22;
+  const sc = Math.min((w - 2 * m) / pw, (h - 2 * m) / ph);
+  const ox = w / 2 - sc * (x0 + x1) / 2, oy = h / 2 + sc * (y0 + y1) / 2;
+  const sx = v => ox + v * sc, sy = v => oy - v * sc;
+  const step = niceStep(70 / sc);
+  c.strokeStyle = "rgba(134,161,176,0.10)"; c.lineWidth = 1;
+  for (let v = Math.floor((-ox / sc) / step) * step; sx(v) < w; v += step) { c.beginPath(); c.moveTo(sx(v) + .5, 0); c.lineTo(sx(v) + .5, h); c.stroke(); }
+  for (let v = Math.floor(((oy - h) / sc) / step) * step; sy(v) > 0; v += step) { c.beginPath(); c.moveTo(0, sy(v) + .5); c.lineTo(w, sy(v) + .5); c.stroke(); }
+  c.strokeStyle = "rgba(134,161,176,0.35)"; c.beginPath(); c.moveTo(sx(0) + .5, 0); c.lineTo(sx(0) + .5, h); c.stroke();
+  if (opt.under) opt.under(c, sx, sy, sc);
+  c.lineWidth = 1.6; c.lineJoin = "round";
+  for (const p of paths) {
+    c.strokeStyle = p.color; c.globalAlpha = p.alpha ?? 0.8; c.beginPath(); let on = false;
+    p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { on = false; return; } if (on) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); on = true; } }); c.stroke();
+    const g = p.glyph ?? p.pts.length - 1, a = p.pts[Math.max(0, g - 2)], b = p.pts[g];
+    if (b && a && isFinite(b[0]) && isFinite(a[0])) {
+      const ang = Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
+      c.save(); c.translate(sx(b[0]), sy(b[1])); c.rotate(ang); c.globalAlpha = 0.9; c.fillStyle = p.color;
+      c.beginPath(); c.moveTo(7, 0); c.quadraticCurveTo(1, -3.4, -6, -2.6); c.lineTo(-6, 2.6); c.quadraticCurveTo(1, 3.4, 7, 0); c.fill(); c.restore();
+    }
+  }
+  c.globalAlpha = 1;
+  if (opt.over) opt.over(c, sx, sy, sc);
+  c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "left";
+  c.fillText(`grid ${step} m · ${opt.up || "wind"} up`, 10, h - 10);
+}
+function advLegend(byPlace) {
+  if (byPlace) return `<span><i style="background:${placeColour(1, 5)}"></i>Won the race</span><span><i style="background:${placeColour(3, 5)}"></i>Middle</span><span><i style="background:${placeColour(5, 5)}"></i>Last</span>`;
+  return advBoats().filter(b => !ADV.off.has(b.name)).map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("");
+}
+function advEvents(kind) {
+  const ev = [];
+  advEach((P, B) => { for (const m of B.b.manoeuvres) if (m.kind === kind) ev.push({ P, B, i0: Math.round(m.t * P.hz), m }); });
+  return ev;
+}
+function advRoundings(which) {
+  const lbl = which === "windward" ? "Windward mark" : "Leeward mark", ev = [];
+  advEach((P, B) => {
+    const marks = (P.M.marks || []).filter(m => m.kind === which).flatMap(m => m.gate ? m.gate : [m]).map(m => P.xy(m.lat, m.lon));
+    if (!marks.length) return;
+    for (const m of B.b.manoeuvres) {
+      if (m.kind !== "rounding" || m.label !== lbl) continue;
+      const c0 = Math.round(m.t * P.hz);
+      let best = Infinity, bi = null, mk = null;
+      for (let i = Math.max(0, c0 - 60 * P.hz); i < Math.min(B.n, c0 + 30 * P.hz); i++) for (const q of marks) { const d = Math.hypot(B.x[i] - q[0], B.y[i] - q[1]); if (d < best) { best = d; bi = i; mk = q; } }
+      if (bi != null && best < 60) ev.push({ P, B, i0: bi, mark: mk, dist: best });
+    }
+  });
+  return ev;
+}
+function advPathAround(P, B, i0, t0, t1, ox, oy, deg, mirror) {
+  const pts = [];
+  for (let s = t0; s <= t1 + 1e-9; s += 0.5) { const i = i0 + Math.round(s * P.hz); if (i < 0 || i >= B.n) continue;
+    if (Math.abs(s) < 1e-9) pts.g = pts.length;
+    let [x, y] = rotTo(B.x[i] - ox, B.y[i] - oy, deg); if (mirror) x = -x; pts.push([x, y]); }
+  return pts;
+}
+function renderAdvanced() {
+  const el = $("advanced");
+  const pick = advRaces(), allB = advBoats(), byPlace = ADV.colour === "place";
+  const chip = (attr, val, on, label, dot) => `<button class="chip" ${attr}="${esc(val)}" aria-pressed="${on}">${dot ? `<i style="background:${dot}"></i>` : ""}${esc(label)}</button>`;
+  let h = `<div><h2>Advanced</h2><p class="note">Every race of the day laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.</p>
+  <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
+  ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
+  <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div></div>`;
+  const card = (id, title, note, wide, tall, legend = true) => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;
+  h += `<div><h2>Tack windows</h2><p class="note">Every tack averaged per boat, from 10 s before head to wind (0) to 30 s after. The VMG bump just before 0 is the boat shooting into the wind; the dip after is the cost of the tack.</p><div class="charts">
+    ${card("advTackVmg", "VMG", "Knots towards the wind.")}${card("advTackSog", "Speed", "Knots over the ground.")}
+    ${card("advTackTwa", "Wind angle", "Degrees off the wind, either tack.")}${card("advTackHeel", "Heel", "Degrees to leeward; it flips side at head to wind.")}</div></div>`;
+  h += `<div><h2>Gybe windows</h2><p class="note">Every gybe averaged per boat, from 10 s before dead downwind (0) to 30 s after.</p><div class="charts">
+    ${card("advGybeVmg", "VMG", "Knots away from the wind.")}${card("advGybeSog", "Speed", "Knots over the ground.")}
+    ${card("advGybeTwa", "Wind angle", "Degrees off the wind, either gybe.")}${card("advGybeHeel", "Heel", "Degrees to leeward.")}</div></div>`;
+  h += `<div><h2>Starts</h2><div class="charts">${card("advStarts", "Every start", "Each boat from a minute before the gun to 30 s after, the boat shape where it was at the gun. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Colour by finish place to see whether the winners started in one spot.", true, true, "place")}</div></div>`;
+  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="charts">
+    ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, all moved so head to wind is in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
+    ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place")}</div></div>`;
+  h += `<div><h2>Mark roundings</h2><div class="advbar">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div><div class="charts">
+    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark.", true, true, "place")}
+    ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
+    <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
+  h += `<div><h2>Speed and heel</h2><div class="charts">
+    ${card("advPolar", "Speed by wind angle", "Average steady speed at each 5° of wind angle, all races picked. Wind speed differs race to race, so compare boats, not races.")}
+    ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, heel and VMG over 3 s, in 2° bands with at least 10 s each. The peak is the fastest heel.")}</div></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll("[data-all]").forEach(b => b.onclick = () => { ADV.races = null; renderAdvanced(); });
+  el.querySelectorAll("[data-race]").forEach(b => b.onclick = () => { const k = +b.dataset.race, s = new Set(advRaces());
+    if (s.size === RACES.length) { s.clear(); s.add(k); } else if (s.has(k)) { if (s.size > 1) s.delete(k); } else s.add(k);
+    ADV.races = s.size === RACES.length ? null : [...s].sort((a, c) => a - c); renderAdvanced(); });
+  el.querySelectorAll("[data-boat]").forEach(b => b.onclick = () => { const n = b.dataset.boat; if (ADV.off.has(n)) ADV.off.delete(n); else if (allB.length - ADV.off.size > 1) ADV.off.add(n); renderAdvanced(); });
+  el.querySelectorAll("[data-colour]").forEach(b => b.onclick = () => { ADV.colour = b.dataset.colour; renderAdvanced(); });
+  el.querySelectorAll("[data-mirror]").forEach(b => b.onclick = () => { ADV.mirror = !ADV.mirror; renderAdvanced(); });
+  el.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => { ADV.mark = b.dataset.mark; renderAdvanced(); });
+  advDone = true; drawAdvanced();
+}
+function drawAdvanced() {
+  if (!advDone || !$("advTackVmg")) return;
+  const byPlace = ADV.colour === "place", col = (P, B) => byPlace ? placeColour(B.pos, P.nb) : B.color;
+  const keys = ["vmg", "sog", "twa", "heel"];
+  const tk = advWindow(advEvents("tack"), -10, 30, keys), gy = advWindow(advEvents("gybe"), -10, 30, keys);
+  advLines("advTackVmg", tk.T, tk.series, "vmg", "VMG kt", "head to wind"); advLines("advTackSog", tk.T, tk.series, "sog", "speed kt", "head to wind");
+  advLines("advTackTwa", tk.T, tk.series, "twa", "TWA °", "head to wind"); advLines("advTackHeel", tk.T, tk.series, "heel", "heel °", "head to wind");
+  advLines("advGybeVmg", gy.T, gy.series, "vmg", "VMG kt", "dead downwind"); advLines("advGybeSog", gy.T, gy.series, "sog", "speed kt", "dead downwind");
+  advLines("advGybeTwa", gy.T, gy.series, "twa", "TWA °", "dead downwind"); advLines("advGybeHeel", gy.T, gy.series, "heel", "heel °", "dead downwind");
+
+  // starts
+  const sp = [], lines = [];
+  for (const k of advRaces()) {
+    const P = advPrep(k); if (P.gunI == null) continue;
+    const L = P.R.line ? [P.R.line.pin, P.R.line.boat] : P.M.line_est ? [P.M.line_est.pin_end, P.M.line_est.rc] : null;
+    let O, deg;
+    if (L) {
+      const a = P.xy(L[0][0], L[0][1]), b = P.xy(L[1][0], L[1][1]); O = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const dx = b[0] - a[0], dy = b[1] - a[1], tw = P.twdAt(P.gunI) * Math.PI / 180;
+      let nx = dy, ny = -dx; if (nx * Math.sin(tw) + ny * Math.cos(tw) < 0) { nx = -nx; ny = -ny; }
+      deg = Math.atan2(nx, ny) * 180 / Math.PI;
+      lines.push([rotTo(a[0] - O[0], a[1] - O[1], deg), rotTo(b[0] - O[0], b[1] - O[1], deg)]);
+    } else {
+      const at = P.boats.filter(B => isFinite(B.x[P.gunI])); if (!at.length) continue;
+      O = [at.reduce((s, B) => s + B.x[P.gunI], 0) / at.length, at.reduce((s, B) => s + B.y[P.gunI], 0) / at.length]; deg = P.twdAt(P.gunI);
+    }
+    for (const B of P.boats) { if (ADV.off.has(B.name)) continue;
+      const pts = advPathAround(P, B, P.gunI, -60, 30, O[0], O[1], deg, false);
+      if (pts.g != null) sp.push({ color: col(P, B), pts, glyph: pts.g }); }
+  }
+  advOverlay("advStarts", sp, { up: "course", extent: lines.flat(), empty: "No starts in the races picked.",
+    under: (c, sx, sy) => { c.setLineDash([5, 5]); c.strokeStyle = "rgba(242,179,61,.6)"; c.lineWidth = 1.2;
+      for (const [a, b] of lines) { c.beginPath(); c.moveTo(sx(a[0]), sy(a[1])); c.lineTo(sx(b[0]), sy(b[1])); c.stroke(); c.fillStyle = "rgba(242,179,61,.8)"; for (const p of [a, b]) { c.beginPath(); c.arc(sx(p[0]), sy(p[1]), 2.5, 0, 7); c.fill(); } }
+      c.setLineDash([]); } });
+
+  // tacks and gybes overlaid at head to wind / dead downwind
+  for (const [kind, id] of [["tack", "advTacks"], ["gybe", "advGybes"]]) {
+    const paths = advEvents(kind).map(({ P, B, i0 }) => {
+      const pre = B.twa[Math.max(0, i0 - 5 * P.hz)];
+      return { color: col(P, B), pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], P.twdAt(i0), ADV.mirror && pre < 0), alpha: 0.7 };
+    });
+    advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
+      over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill(); } });
+  }
+
+  // roundings
+  const rd = advRoundings(ADV.mark);
+  advOverlay("advRound", rd.map(({ P, B, i0, mark }) => ({ color: col(P, B), pts: advPathAround(P, B, i0, -30, 30, mark[0], mark[1], P.twdAt(i0), false), alpha: 0.75 })), {
+    empty: "No roundings of that mark found (the mark has to be placed for the race).",
+    extent: [[-16, -16], [16, 16]],
+    under: (c, sx, sy, sc) => { c.setLineDash([2, 4]); c.strokeStyle = "rgba(134,161,176,.5)"; c.lineWidth = 1; c.beginPath(); c.arc(sx(0), sy(0), 13.7 * sc, 0, 7); c.stroke(); c.setLineDash([]); },
+    over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 4, 0, 7); c.fill(); } });
+  const rw = advWindow(rd, -20, 40, ["sog", "twa"]);
+  advLines("advRoundSog", rw.T, rw.series, "sog", "speed kt", "mark"); advLines("advRoundTwa", rw.T, rw.series, "twa", "TWA °", "mark");
+  const per = new Map();
+  for (const e of rd) { const { P, B, i0, dist } = e; const at = s => B.sog[Math.min(B.n - 1, i0 + Math.round(s * P.hz))], ta = s => Math.abs(B.twa[Math.min(B.n - 1, i0 + Math.round(s * P.hz))]);
+    let r = per.get(B.name); if (!r) per.set(B.name, r = { color: B.color, n: 0, d: [], s0: [], s10: [], s20: [], a10: [], in10: [] });
+    r.n++; r.d.push(dist); r.s0.push(at(0)); r.s10.push(at(10)); r.s20.push(at(20)); r.a10.push(ta(10)); r.in10.push(at(-10)); }
+  const md = a => { a = a.filter(isFinite).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
+  let t = `<table><thead><tr><th>Boat</th><th>Roundings</th><th>Closest to mark</th><th>Speed 10 s before</th><th>At mark</th><th>+10 s</th><th>+20 s</th><th>Wind angle +10 s</th></tr></thead><tbody>`;
+  for (const [n, r] of per) t += `<tr><td class="nm"><i style="background:${r.color}"></i>${esc(n)}</td><td>${r.n}</td><td>${fmtNum(md(r.d), 0)} m</td><td>${fmtNum(md(r.in10), 1)} kt</td><td>${fmtNum(md(r.s0), 1)} kt</td><td>${fmtNum(md(r.s10), 1)} kt</td><td>${fmtNum(md(r.s20), 1)} kt</td><td>${fmtNum(md(r.a10), 0)}°</td></tr>`;
+  $("advRoundTbl").innerHTML = per.size ? t + `</tbody></table><p class="note">Medians. Closest to mark is from the GPS track and the mark position worked out from the fleet, so a few metres either way.</p>` : `<p class="note">No roundings found.</p>`;
+
+  // speed by wind angle, heel vs VMG (steady sailing only)
+  const pol = new Map(), hv = new Map();
+  advEach((P, B) => {
+    let a = pol.get(B.name); if (!a) pol.set(B.name, a = { color: B.color, s: new Float64Array(30), c: new Float64Array(30) });
+    let b = hv.get(B.name); if (!b) hv.set(B.name, b = { color: B.color, s: new Float64Array(30), c: new Float64Array(30) });
+    const k3 = Math.max(1, Math.round(3 * P.hz)), half = Math.floor(k3 / 2);
+    for (let i = 0; i < B.n; i++) {
+      if (B.st[i] !== "1") continue;
+      const at = Math.abs(B.twa[i]); if (!isFinite(at) || !isFinite(B.sog[i])) continue;
+      const j = Math.floor(at / 5); if (j < 30) { a.s[j] += B.sog[i]; a.c[j]++; }
+      if (at < 70) { let hs = 0, vs = 0, nn = 0; for (let q = i - half; q <= i + half; q++) if (q >= 0 && q < B.n && isFinite(B.heel[q]) && isFinite(B.vmg[q])) { hs += B.heel[q]; vs += B.vmg[q]; nn++; }
+        if (nn) { const bj = Math.floor((hs / nn + 12) / 2); if (bj >= 0 && bj < 30) { b.s[bj] += vs / nn; b.c[bj]++; } } }
+    }
+    a.hz = b.hz = P.hz;
+  });
+  const binSeries = (mp, xOf, minS) => [...mp].map(([name, a]) => ({ name, color: a.color, x: [...a.s].map((_, j) => xOf(j)), y: [...a.s].map((v, j) => a.c[j] >= minS * (a.hz || 2) ? v / a.c[j] : NaN) }));
+  const scatter = (id, ser, xl, yl, empty) => { const [cv, c, w, h] = chartCanvas(id); const ys = ser.flatMap(s => s.y).filter(isFinite);
+    if (!ys.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(empty, 50, 40); return; }
+    const xsF = ser.flatMap(s => s.x.filter((_, j) => isFinite(s.y[j]))); const x0 = Math.min(...xsF) - 2, x1 = Math.max(...xsF) + 2;
+    const y0 = Math.floor(Math.min(...ys) * 2) / 2 - 0.2, y1 = Math.ceil(Math.max(...ys) * 2) / 2 + 0.2;
+    const [X, Y] = axes(c, w, h, x0, x1, y0, y1, xl, yl);
+    for (const s of ser) { c.strokeStyle = s.color; c.fillStyle = s.color; c.lineWidth = 2; c.beginPath(); let on = false;
+      s.y.forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(s.x[j]), Y(v)); else { c.moveTo(X(s.x[j]), Y(v)); on = true; } }); c.stroke();
+      s.y.forEach((v, j) => { if (isFinite(v)) { c.beginPath(); c.arc(X(s.x[j]), Y(v), 2.5, 0, 7); c.fill(); } }); } };
+  scatter("advPolar", binSeries(pol, j => j * 5 + 2.5, 10), "wind angle °", "speed kt", "No steady sailing in the races picked.");
+  scatter("advHeel", binSeries(hv, j => j * 2 - 11, 10), "heel to leeward °", "VMG kt", "No steady upwind sailing in the races picked.");
+}
+
 // ---------- boot
 const ro = new ResizeObserver(() => { if (SIG.aborted) return; if (!$("view-replay").hidden) resize(); else { sizeScrub(); drawScrub(); } });
 ro.observe($("mapwrap")); ro.observe($("scrubwrap"));
 SIG.addEventListener("abort", () => { ro.disconnect(); state.playing = false; keepAwake(false); });
-window.addEventListener("resize", () => { if ($("view-replay").hidden && debriefDone) { drawSpeedChart(); drawHeelChart(); drawPhaseChart(); } }, ON);
+window.addEventListener("resize", () => { if (!$("view-debrief").hidden && debriefDone) { drawSpeedChart(); drawHeelChart(); drawPhaseChart(); } if (!$("view-advanced").hidden) drawAdvanced(); }, ON);
 show(VIEW);
 resize(); refresh();
 if (SESSION.cycle && SESSION.autoplay && VIEW !== "debrief") setTimeout(() => { if (!SIG.aborted) setPlaying(true); }, 600);
