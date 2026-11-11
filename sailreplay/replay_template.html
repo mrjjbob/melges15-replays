@@ -1123,8 +1123,8 @@ function advOverlay(id, paths, opt = {}) {
   if (opt.under) opt.under(c, sx, sy, sc);
   c.lineWidth = 1.6; c.lineJoin = "round";
   for (const p of paths) {
-    if (p.gold) { c.save(); c.strokeStyle = GOLD; c.globalAlpha = 0.9; c.lineWidth = 6; c.shadowColor = GOLD; c.shadowBlur = 8; c.beginPath(); let o2 = false;
-      p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { o2 = false; return; } if (o2) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); o2 = true; } }); c.stroke(); c.restore(); c.lineWidth = 2.2; }
+    if (p.gold) { c.save(); c.strokeStyle = GOLD; c.globalAlpha = 0.45; c.lineWidth = 4; c.shadowColor = GOLD; c.shadowBlur = 3; c.beginPath(); let o2 = false;
+      p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { o2 = false; return; } if (o2) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); o2 = true; } }); c.stroke(); c.restore(); c.lineWidth = 1.8; }
     else c.lineWidth = 1.6;
     c.strokeStyle = p.color; c.globalAlpha = p.gold ? 1 : (p.alpha ?? 0.8); c.beginPath(); let on = false;
     p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { on = false; return; } if (on) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); on = true; } }); c.stroke();
@@ -1196,7 +1196,7 @@ function renderAdvanced() {
     ${card("advTacks", "Every tack", `From 10 s before head to wind to ${ADV.after || 30} s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one. The gold one made the most distance upwind by the end, in that boat's colour.`, false, true, "place", mirrorChip)}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to ${ADV.after || 30} s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""} The gold one made the most distance downwind by the end.`, false, true, "place", mirrorChip)}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="charts">
-    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div>`)}
+    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div>`)}
     ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Speed and heel</h2><div class="charts">
@@ -1314,11 +1314,21 @@ function drawAdvanced() {
 
   // roundings
   const rd = advRoundings(ADV.mark);
-  advOverlay("advRound", rd.map(({ P, B, i0, mark }) => ({ color: col(P, B), pts: advPathAround(P, B, i0, -30, 30, mark[0], mark[1], P.twdAt(i0), false), alpha: 0.75 })), {
+  const rPaths = rd.map(({ P, B, i0, mark }) => {
+    const pts = advPathAround(P, B, i0, -30, 30, mark[0], mark[1], P.twdAt(i0), false, true), end = pts[pts.length - 1];
+    // best: furthest towards the next mark 30 s after passing this one (downwind after a windward mark)
+    const gain = end && isFinite(end[1]) ? (ADV.mark === "windward" ? -end[1] : end[1]) : null;
+    return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1 };
+  });
+  let rBest = null; for (const q of rPaths) if (q.gain != null && (!rBest || q.gain > rBest.gain)) rBest = q;
+  if (rBest) { rBest.gold = true; rPaths.splice(rPaths.indexOf(rBest), 1); rPaths.push(rBest); }
+  advOverlay("advRound", rPaths, {
     empty: "No roundings of that mark found (the mark has to be placed for the race).",
     extent: [[-16, -16], [16, 16]],
     under: (c, sx, sy, sc) => { c.setLineDash([2, 4]); c.strokeStyle = "rgba(134,161,176,.5)"; c.lineWidth = 1; c.beginPath(); c.arc(sx(0), sy(0), 13.7 * sc, 0, 7); c.stroke(); c.setLineDash([]); },
-    over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 4, 0, 7); c.fill(); } });
+    over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 4, 0, 7); c.fill();
+      if (rBest) { c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";
+        c.fillText(`best: ${rBest.who} · R${rBest.race} · ${Math.round(rBest.gain)} m ${ADV.mark === "windward" ? "downwind" : "upwind"} 30 s after the mark`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } } });
   const rw = advWindow(rd, -20, 40, ["sog", "twa"]);
   advLines("advRoundSog", rw.T, rw.series, "sog", "speed kt", "mark"); advLines("advRoundTwa", rw.T, rw.series, "twa", "TWA °", "mark");
   const per = new Map();
