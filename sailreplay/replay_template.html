@@ -151,6 +151,9 @@ tr.jumprace .flag { color: var(--accent); }
 .chartcard.wide { grid-column: 1 / -1; }
 .chartcard canvas.tall { height: 520px; }
 .advbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.advplay { display: flex; gap: 12px; align-items: center; margin: 4px 0 10px; }
+.advplay input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.advplay .t { font: 500 13px/1 var(--f-data); color: var(--muted); min-width: 120px; text-align: right; }
 .advbar .k { font: 600 12px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); min-width: 64px; }
 .advbar .chip { background: var(--panel-2); }
 .advbar .chip i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
@@ -1034,7 +1037,7 @@ function drawHeelChart() {
 
 // ---------- advanced: every race of the day, for the nerds
 // Settings live on window so they survive switching races (the page is rebuilt for each race).
-const ADV = window.__ADV || (window.__ADV = { races: null, off: new Set(), colour: "boat", mirror: true, mark: "windward" });
+const ADV = window.__ADV || (window.__ADV = { races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false });
 let advDone = false;
 function advPrep(k) {
   const cache = window.__ADVC || (window.__ADVC = []);
@@ -1106,6 +1109,7 @@ function advOverlay(id, paths, opt = {}) {
   for (const p of paths) {
     c.strokeStyle = p.color; c.globalAlpha = p.alpha ?? 0.8; c.beginPath(); let on = false;
     p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { on = false; return; } if (on) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); on = true; } }); c.stroke();
+    if (p.glyph === false) continue;
     const g = p.glyph ?? p.pts.length - 1, a = p.pts[Math.max(0, g - 2)], b = p.pts[g];
     if (b && a && isFinite(b[0]) && isFinite(a[0])) {
       const ang = Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
@@ -1142,9 +1146,9 @@ function advRoundings(which) {
   });
   return ev;
 }
-function advPathAround(P, B, i0, t0, t1, ox, oy, deg, mirror) {
+function advPathAround(P, B, i0, t0, t1, ox, oy, deg, mirror, pad) {
   const pts = [];
-  for (let s = t0; s <= t1 + 1e-9; s += 0.5) { const i = i0 + Math.round(s * P.hz); if (i < 0 || i >= B.n) continue;
+  for (let s = t0; s <= t1 + 1e-9; s += 0.5) { const i = i0 + Math.round(s * P.hz); if (i < 0 || i >= B.n) { if (pad) pts.push([NaN, NaN]); continue; }
     if (Math.abs(s) < 1e-9) pts.g = pts.length;
     let [x, y] = rotTo(B.x[i] - ox, B.y[i] - oy, deg); if (mirror) x = -x; pts.push([x, y]); }
   return pts;
@@ -1156,7 +1160,7 @@ function renderAdvanced() {
   let h = `<div><h2>Advanced</h2><p class="note">Every race of the day laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.</p>
   <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
   ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
-  <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div></div>`;
+  <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}</div></div>`;
   const card = (id, title, note, wide, tall, legend = true) => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;
   h += `<div><h2>Tack windows</h2><p class="note">Every tack averaged per boat, from 10 s before head to wind (0) to 30 s after. The VMG bump just before 0 is the boat shooting into the wind; the dip after is the cost of the tack.</p><div class="charts">
     ${card("advTackVmg", "VMG", "Knots towards the wind.")}${card("advTackSog", "Speed", "Knots over the ground.")}
@@ -1164,9 +1168,11 @@ function renderAdvanced() {
   h += `<div><h2>Gybe windows</h2><p class="note">Every gybe averaged per boat, from 10 s before dead downwind (0) to 30 s after.</p><div class="charts">
     ${card("advGybeVmg", "VMG", "Knots away from the wind.")}${card("advGybeSog", "Speed", "Knots over the ground.")}
     ${card("advGybeTwa", "Wind angle", "Degrees off the wind, either gybe.")}${card("advGybeHeel", "Heel", "Degrees to leeward.")}</div></div>`;
-  h += `<div><h2>Starts</h2><div class="charts">${card("advStarts", "Every start", "Each boat from a minute before the gun to 30 s after, the boat shape where it was at the gun. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Colour by finish place to see whether the winners started in one spot.", true, true, "place")}</div></div>`;
-  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="charts">
-    ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, all moved so head to wind is in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
+  h += `<div><h2>Starts</h2><div class="charts"><div class="chartcard wide"><h3>Every start</h3><p class="note">Every race's start played together, from a minute before the gun to 30 s after. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.</p>
+    <div class="advplay"><button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button><input type="range" id="advStartT" min="-60" max="30" step="0.5" value="${ADV.startT}" aria-label="Time from the gun"><span class="t" id="advStartLbl"></span></div>
+    <canvas id="advStarts" class="tall"></canvas><div class="legend">${advLegend(byPlace)}</div></div></div></div>`;
+  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own heading going in: the wind is taken as the fleet's average entry angle off that heading, so every boat comes in at the same angle and a shift during the manoeuvre shows in the exit. Exiting higher than you came in is a lift, lower a header.</p><div class="charts">
+    ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place")}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="advbar">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div><div class="charts">
     ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark.", true, true, "place")}
@@ -1174,7 +1180,8 @@ function renderAdvanced() {
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Speed and heel</h2><div class="charts">
     ${card("advPolar", "Speed by wind angle", "Average steady speed at each 5° of wind angle, all races picked. Wind speed differs race to race, so compare boats, not races.")}
-    ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, heel and VMG over 3 s, in 2° bands with at least 10 s each. The peak is the fastest heel.")}</div></div>`;
+    ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, heel and VMG over 2 s, in 1° bands. Solid where a band has 6 s or more; dashed and hollow where it has 2 to 6 s, so treat the ends as a hint. The peak is the fastest heel.")}
+    ${card("advHeelDn", "Downwind VMG by heel, all races", "The same for steady downwind sailing (wind angle over 110°). Negative is heeled to windward. Clearest on a light day, before the boats are planing.")}</div></div>`;
   el.innerHTML = h;
   el.querySelectorAll("[data-all]").forEach(b => b.onclick = () => { ADV.races = null; renderAdvanced(); });
   el.querySelectorAll("[data-race]").forEach(b => b.onclick = () => { const k = +b.dataset.race, s = new Set(advRaces());
@@ -1184,6 +1191,8 @@ function renderAdvanced() {
   el.querySelectorAll("[data-colour]").forEach(b => b.onclick = () => { ADV.colour = b.dataset.colour; renderAdvanced(); });
   el.querySelectorAll("[data-mirror]").forEach(b => b.onclick = () => { ADV.mirror = !ADV.mirror; renderAdvanced(); });
   el.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => { ADV.mark = b.dataset.mark; renderAdvanced(); });
+  $("advStartPlay").onclick = () => { ADV.playing = !ADV.playing; if (ADV.playing && (ADV.startT >= 30 || !ADV.played)) ADV.startT = -60; ADV.played = true; advStartUi(); if (ADV.playing) advStartLoop(); };
+  $("advStartT").oninput = e => { ADV.startT = +e.target.value; ADV.playing = false; ADV.played = true; advStartUi(); drawStarts(); };
   advDone = true; drawAdvanced();
 }
 function drawAdvanced() {
@@ -1196,7 +1205,7 @@ function drawAdvanced() {
   advLines("advGybeVmg", gy.T, gy.series, "vmg", "VMG kt", "dead downwind"); advLines("advGybeSog", gy.T, gy.series, "sog", "speed kt", "dead downwind");
   advLines("advGybeTwa", gy.T, gy.series, "twa", "TWA °", "dead downwind"); advLines("advGybeHeel", gy.T, gy.series, "heel", "heel °", "dead downwind");
 
-  // starts
+  // starts (played back by drawStarts)
   const sp = [], lines = [];
   for (const k of advRaces()) {
     const P = advPrep(k); if (P.gunI == null) continue;
@@ -1213,22 +1222,27 @@ function drawAdvanced() {
       O = [at.reduce((s, B) => s + B.x[P.gunI], 0) / at.length, at.reduce((s, B) => s + B.y[P.gunI], 0) / at.length]; deg = P.twdAt(P.gunI);
     }
     for (const B of P.boats) { if (ADV.off.has(B.name)) continue;
-      const pts = advPathAround(P, B, P.gunI, -60, 30, O[0], O[1], deg, false);
-      if (pts.g != null) sp.push({ color: col(P, B), pts, glyph: pts.g }); }
+      const pts = advPathAround(P, B, P.gunI, -60, 30, O[0], O[1], deg, false, true);
+      if (pts.some(q => isFinite(q[0]))) sp.push({ color: col(P, B), pts }); }
   }
-  advOverlay("advStarts", sp, { up: "course", extent: lines.flat(), empty: "No starts in the races picked.",
-    under: (c, sx, sy) => { c.setLineDash([5, 5]); c.strokeStyle = "rgba(242,179,61,.6)"; c.lineWidth = 1.2;
-      for (const [a, b] of lines) { c.beginPath(); c.moveTo(sx(a[0]), sy(a[1])); c.lineTo(sx(b[0]), sy(b[1])); c.stroke(); c.fillStyle = "rgba(242,179,61,.8)"; for (const p of [a, b]) { c.beginPath(); c.arc(sx(p[0]), sy(p[1]), 2.5, 0, 7); c.fill(); } }
-      c.setLineDash([]); } });
+  ADVS = { paths: sp, lines };
+  advStartUi(); drawStarts();
+  if (ADV.playing) advStartLoop();
 
   // tacks and gybes overlaid at head to wind / dead downwind
   for (const [kind, id] of [["tack", "advTacks"], ["gybe", "advGybes"]]) {
-    const paths = advEvents(kind).map(({ P, B, i0 }) => {
-      const pre = B.twa[Math.max(0, i0 - 5 * P.hz)];
-      return { color: col(P, B), pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], P.twdAt(i0), ADV.mirror && pre < 0), alpha: 0.7 };
-    });
+    // entry heading from the track 10 s to 4 s before; which tack from the wind angle then
+    const ev = advEvents(kind).map(e => { const { P, B, i0 } = e, a = i0 - 10 * P.hz, b = i0 - 4 * P.hz;
+      if (a < 0 || !isFinite(B.x[a]) || !isFinite(B.x[b])) return null;
+      let tw = 0, nn = 0; for (let i = a; i <= b; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
+      if (!nn) return null;
+      return { ...e, brg: Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI, side: Math.sign(tw), ang: Math.abs(tw / nn) }; }).filter(Boolean);
+    const angs = ev.map(e => e.ang).sort((x, y) => x - y), alpha = angs.length ? angs[Math.floor(angs.length / 2)] : null;
+    const paths = ev.map(({ P, B, i0, brg, side }) => ({ color: col(P, B), alpha: 0.7,
+      pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], brg + side * alpha, ADV.mirror && side < 0) }));
     advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
-      over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill(); } });
+      over: (c, sx, sy, sc, w) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill();
+        c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "right"; c.fillText(`entry ${Math.round(alpha)}° off the wind`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } });
   }
 
   // roundings
@@ -1250,31 +1264,76 @@ function drawAdvanced() {
   $("advRoundTbl").innerHTML = per.size ? t + `</tbody></table><p class="note">Medians. Closest to mark is from the GPS track and the mark position worked out from the fleet, so a few metres either way.</p>` : `<p class="note">No roundings found.</p>`;
 
   // speed by wind angle, heel vs VMG (steady sailing only)
-  const pol = new Map(), hv = new Map();
+  const HEEL0 = -40, NH = 100;                         // 1-degree heel bins from -40 to +60
+  const pol = new Map(), hv = new Map(), hd = new Map();
+  const bins = (mp, name, color, n) => { let a = mp.get(name); if (!a) mp.set(name, a = { color, s: new Float64Array(n), c: new Float64Array(n) }); return a; };
   advEach((P, B) => {
-    let a = pol.get(B.name); if (!a) pol.set(B.name, a = { color: B.color, s: new Float64Array(30), c: new Float64Array(30) });
-    let b = hv.get(B.name); if (!b) hv.set(B.name, b = { color: B.color, s: new Float64Array(30), c: new Float64Array(30) });
-    const k3 = Math.max(1, Math.round(3 * P.hz)), half = Math.floor(k3 / 2);
+    const a = bins(pol, B.name, B.color, 30), b = bins(hv, B.name, B.color, NH), d = bins(hd, B.name, B.color, NH);
+    const half = Math.max(0, Math.round(P.hz) - 1);    // heel and VMG over about 2 s
     for (let i = 0; i < B.n; i++) {
       if (B.st[i] !== "1") continue;
       const at = Math.abs(B.twa[i]); if (!isFinite(at) || !isFinite(B.sog[i])) continue;
       const j = Math.floor(at / 5); if (j < 30) { a.s[j] += B.sog[i]; a.c[j]++; }
-      if (at < 70) { let hs = 0, vs = 0, nn = 0; for (let q = i - half; q <= i + half; q++) if (q >= 0 && q < B.n && isFinite(B.heel[q]) && isFinite(B.vmg[q])) { hs += B.heel[q]; vs += B.vmg[q]; nn++; }
-        if (nn) { const bj = Math.floor((hs / nn + 12) / 2); if (bj >= 0 && bj < 30) { b.s[bj] += vs / nn; b.c[bj]++; } } }
+      if (at < 70 || at > 110) { let hs = 0, vs = 0, nn = 0; for (let q = i - half; q <= i + half; q++) if (q >= 0 && q < B.n && isFinite(B.heel[q]) && isFinite(B.vmg[q])) { hs += B.heel[q]; vs += B.vmg[q]; nn++; }
+        if (nn) { const bj = Math.floor(hs / nn - HEEL0), tgt = at < 70 ? b : d; if (bj >= 0 && bj < NH) { tgt.s[bj] += vs / nn; tgt.c[bj]++; } } }
     }
-    a.hz = b.hz = P.hz;
+    a.hz = b.hz = d.hz = P.hz;
   });
-  const binSeries = (mp, xOf, minS) => [...mp].map(([name, a]) => ({ name, color: a.color, x: [...a.s].map((_, j) => xOf(j)), y: [...a.s].map((v, j) => a.c[j] >= minS * (a.hz || 2) ? v / a.c[j] : NaN) }));
+  // minS: fewest seconds for a point; solidS: seconds for it to count as solid
+  const binSeries = (mp, xOf, minS, solidS = minS) => [...mp].map(([name, a]) => ({ name, color: a.color, x: [...a.s].map((_, j) => xOf(j)),
+    y: [...a.s].map((v, j) => a.c[j] >= minS * (a.hz || 2) ? v / a.c[j] : NaN), solid: [...a.c].map(c => c >= solidS * (a.hz || 2)) }));
   const scatter = (id, ser, xl, yl, empty) => { const [cv, c, w, h] = chartCanvas(id); const ys = ser.flatMap(s => s.y).filter(isFinite);
     if (!ys.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(empty, 50, 40); return; }
-    const xsF = ser.flatMap(s => s.x.filter((_, j) => isFinite(s.y[j]))); const x0 = Math.min(...xsF) - 2, x1 = Math.max(...xsF) + 2;
+    const xsF = ser.flatMap(s => s.x.filter((_, j) => isFinite(s.y[j]))); const x0 = Math.min(...xsF) - 1, x1 = Math.max(...xsF) + 1;
     const y0 = Math.floor(Math.min(...ys) * 2) / 2 - 0.2, y1 = Math.ceil(Math.max(...ys) * 2) / 2 + 0.2;
     const [X, Y] = axes(c, w, h, x0, x1, y0, y1, xl, yl);
-    for (const s of ser) { c.strokeStyle = s.color; c.fillStyle = s.color; c.lineWidth = 2; c.beginPath(); let on = false;
-      s.y.forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(s.x[j]), Y(v)); else { c.moveTo(X(s.x[j]), Y(v)); on = true; } }); c.stroke();
-      s.y.forEach((v, j) => { if (isFinite(v)) { c.beginPath(); c.arc(X(s.x[j]), Y(v), 2.5, 0, 7); c.fill(); } }); } };
+    for (const s of ser) { c.strokeStyle = s.color; c.fillStyle = s.color; c.lineWidth = 2; const ok = j => s.solid ? s.solid[j] : true;
+      let pj = null;
+      s.y.forEach((v, j) => { if (!isFinite(v)) { pj = null; return; }
+        if (pj != null) { const sol = ok(pj) && ok(j); c.globalAlpha = sol ? 1 : 0.55; c.setLineDash(sol ? [] : [3, 3]); c.beginPath(); c.moveTo(X(s.x[pj]), Y(s.y[pj])); c.lineTo(X(s.x[j]), Y(v)); c.stroke(); }
+        pj = j; });
+      c.setLineDash([]);
+      s.y.forEach((v, j) => { if (!isFinite(v)) return; c.beginPath(); c.arc(X(s.x[j]), Y(v), ok(j) ? 2.5 : 2.2, 0, 7);
+        if (ok(j)) { c.globalAlpha = 1; c.fill(); } else { c.globalAlpha = 0.7; c.lineWidth = 1.2; c.stroke(); c.lineWidth = 2; } });
+      c.globalAlpha = 1; } };
   scatter("advPolar", binSeries(pol, j => j * 5 + 2.5, 10), "wind angle °", "speed kt", "No steady sailing in the races picked.");
-  scatter("advHeel", binSeries(hv, j => j * 2 - 11, 10), "heel to leeward °", "VMG kt", "No steady upwind sailing in the races picked.");
+  scatter("advHeel", binSeries(hv, j => j + HEEL0 + 0.5, 2, 6), "heel to leeward °", "VMG kt", "No steady upwind sailing in the races picked.");
+  scatter("advHeelDn", binSeries(hd, j => j + HEEL0 + 0.5, 2, 6), "heel to leeward °", "VMG kt", "No steady downwind sailing in the races picked.");
+}
+let ADVS = null;
+function advStartUi() {
+  const b = $("advStartPlay"), r = $("advStartT"), l = $("advStartLbl"); if (!b) return;
+  b.textContent = ADV.playing ? "Pause" : "Play"; b.setAttribute("aria-pressed", String(ADV.playing));
+  r.value = ADV.startT; l.textContent = ADV.startT === 0 ? "Gun" : fmtClock(Math.abs(ADV.startT)) + (ADV.startT < 0 ? " to the gun" : " after the gun");
+}
+function drawStarts() {
+  if (!ADVS || !$("advStarts")) return;
+  const t = ADV.startT, j = Math.round((t + 60) * 2), j0 = Math.max(0, j - 40);
+  const paths = [];
+  for (const p of ADVS.paths) paths.push({ color: p.color, pts: p.pts, alpha: 0.13, glyph: false });
+  for (const p of ADVS.paths) { const seg = p.pts.slice(j0, j + 1); if (seg.length && isFinite(seg[seg.length - 1][0])) paths.push({ color: p.color, pts: seg, alpha: 0.95 }); }
+  const lines = ADVS.lines;
+  advOverlay("advStarts", paths, { up: "course", extent: lines.flat(), empty: "No starts in the races picked.",
+    under: (c, sx, sy) => { c.setLineDash([5, 5]); c.strokeStyle = t >= 0 ? "rgba(242,179,61,.85)" : "rgba(242,179,61,.5)"; c.lineWidth = t >= 0 ? 1.6 : 1.2;
+      for (const [a, b] of lines) { c.beginPath(); c.moveTo(sx(a[0]), sy(a[1])); c.lineTo(sx(b[0]), sy(b[1])); c.stroke(); c.fillStyle = "rgba(242,179,61,.8)"; for (const p of [a, b]) { c.beginPath(); c.arc(sx(p[0]), sy(p[1]), 2.5, 0, 7); c.fill(); } }
+      c.setLineDash([]); },
+    over: c => { c.font = "600 26px " + cssv("--f-display"); c.fillStyle = t < 0 ? C.ink : C.accent; c.textAlign = "left";
+      c.fillText(t === 0 ? "GUN" : (t < 0 ? "−" : "+") + fmtClock(Math.abs(t)), 12, 32); } });
+}
+function advStartLoop() {
+  if (window.__ADVRAF) cancelAnimationFrame(window.__ADVRAF);
+  let last = performance.now(), hold = 0;
+  const RATE = 5;                                       // 90 s of racing in 18 s
+  const tick = now => {
+    if (SIG.aborted || !ADV.playing || !$("advStarts") || $("view-advanced").hidden) { window.__ADVRAF = null; return; }
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (hold > 0) { hold -= dt; if (hold <= 0) ADV.startT = -60; }
+    else { ADV.startT = Math.min(30, ADV.startT + dt * RATE); if (ADV.startT >= 30) hold = 1.2; }   // pause on the last frame, then loop
+    ADV.startT = Math.round(ADV.startT * 100) / 100;
+    advStartUi(); drawStarts();
+    window.__ADVRAF = requestAnimationFrame(tick);
+  };
+  window.__ADVRAF = requestAnimationFrame(tick);
 }
 
 // ---------- boot
