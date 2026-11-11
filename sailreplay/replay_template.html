@@ -1201,7 +1201,7 @@ function renderAdvanced() {
     ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Heel</h2><div class="charts">
-    ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, in 1° bands. Heel is smoothed for each race's sea state (longer in a chop, shorter on flat water); VMG over 2 s. Solid where a band has 6 s or more; dashed and hollow where it has 2 to 6 s, so treat the ends as a hint. The gold line is the ideal heel: where VMG peaks with every boat picked pooled together.")}
+    ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, in 1° bands. Heel is smoothed for each race's sea state (longer in a chop, shorter on flat water); VMG over 2 s. The brighter and bigger a point, the more time that boat spent at that heel; faint, small points (hollow under 6 s) are a few seconds and easily a fluke. The gold line is the ideal heel: where VMG peaks with every boat picked pooled together, with bands that have little time pulled towards the average so they can't win on a lucky gust. VMG is often flat over a range of heel: the shaded band is every heel within 1.5% of the best, the line its middle, and the label says how much sailing it rests on.")}
     ${card("advHeelDn", "Downwind VMG by heel, all races", "The same for steady downwind sailing (wind angle over 110°). Negative is heeled to windward. Clearest on a light day, before the boats are planing. The gold line is the ideal heel for the boats picked.")}</div></div>`;
   el.innerHTML = h;
   el.querySelectorAll("[data-all]").forEach(b => b.onclick = () => { ADV.races = null; renderAdvanced(); });
@@ -1356,36 +1356,60 @@ function drawAdvanced() {
     b.hz = d.hz = P.hz;
   });
   // minS: fewest seconds for a point; solidS: seconds for it to count as solid
-  const binSeries = (mp, xOf, minS, solidS = minS) => [...mp].map(([name, a]) => ({ name, color: a.color, x: [...a.s].map((_, j) => xOf(j)),
-    y: [...a.s].map((v, j) => a.c[j] >= minS * (a.hz || 2) ? v / a.c[j] : NaN), solid: [...a.c].map(c => c >= solidS * (a.hz || 2)) }));
-  // the heel with the best VMG across all boats picked: every band pooled, smoothed over its neighbours
-  // (1-2-1) so a single lucky band doesn't win, and only bands with 10 s or more in all
+  // per boat: average VMG in each band, and the seconds spent there (what the brightness shows)
+  const binSeries = (mp, xOf, minS) => [...mp].map(([name, a]) => { const hz = a.hz || 2;
+    return { name, color: a.color, x: [...a.s].map((_, j) => xOf(j)),
+      y: [...a.s].map((v, j) => a.c[j] >= minS * hz ? v / a.c[j] : NaN), sec: [...a.c].map(c => c / hz) }; });
+  // The ideal heel: every boat picked pooled, smoothed over neighbouring bands (1-2-1), and each band's
+  // VMG pulled towards the overall average in proportion to how little time it has (a band with 20 s
+  // is pulled halfway). A band sailed for a few seconds can't win on a lucky gust; one sailed for
+  // minutes counts nearly at face value.
+  const PULL_S = 30, PLATEAU = 0.015;
   const idealHeel = mp => { const S = new Float64Array(NH), N = new Float64Array(NH); let hz = 2;
     for (const a of mp.values()) { hz = a.hz || hz; for (let j = 0; j < NH; j++) { S[j] += a.s[j]; N[j] += a.c[j]; } }
+    const tot = N.reduce((x, y) => x + y, 0); if (!tot) return null;
+    const mean = S.reduce((x, y) => x + y, 0) / tot, k = PULL_S * hz;
+    const V = new Float64Array(NH).fill(NaN);
     let best = null, bv = -Infinity;
-    for (let j = 1; j < NH - 1; j++) { const n = N[j - 1] + 2 * N[j] + N[j + 1]; if (N[j] < 10 * hz || n === 0) continue;
-      const v = (S[j - 1] + 2 * S[j] + S[j + 1]) / n; if (v > bv) { bv = v; best = j; } }
-    return best == null ? null : { heel: best + HEEL0 + 0.5, vmg: bv }; };
+    for (let j = 1; j < NH - 1; j++) { if (N[j] < 3 * hz) continue;
+      const n = N[j - 1] + 2 * N[j] + N[j + 1], sm = S[j - 1] + 2 * S[j] + S[j + 1];
+      V[j] = (sm + k * mean) / (n + k); if (V[j] > bv) { bv = V[j]; best = j; } }
+    if (best == null) return null;
+    // VMG is often flat over a range of heel, so take every band next to the peak within 1.5% of it;
+    // the line goes at that range's time-weighted middle
+    let lo = best, hi = best;
+    while (lo > 1 && V[lo - 1] >= bv * (1 - PLATEAU)) lo--;
+    while (hi < NH - 2 && V[hi + 1] >= bv * (1 - PLATEAU)) hi++;
+    let tw = 0, tn = 0; for (let j = lo; j <= hi; j++) { tw += (j + HEEL0 + 0.5) * N[j]; tn += N[j]; }
+    return { heel: tw / tn, lo: lo + HEEL0, hi: hi + HEEL0 + 1, vmg: bv, sec: tn / hz }; };
+  // Brightness and dot size show time in each band, against that boat's busiest band; under 6 s the dot is hollow
   const scatter = (id, ser, xl, yl, empty, ideal) => { const [cv, c, w, h] = chartCanvas(id); const ys = ser.flatMap(s => s.y).filter(isFinite);
     if (!ys.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(empty, 50, 40); return; }
     const xsF = ser.flatMap(s => s.x.filter((_, j) => isFinite(s.y[j]))); const x0 = Math.min(...xsF) - 1, x1 = Math.max(...xsF) + 1;
     const y0 = Math.floor(Math.min(...ys) * 2) / 2 - 0.2, y1 = Math.ceil(Math.max(...ys) * 2) / 2 + 0.2;
     const [X, Y, , Bm, Tp] = axes(c, w, h, x0, x1, y0, y1, xl, yl);
-    if (ideal && ideal.heel >= x0 && ideal.heel <= x1) { c.save(); c.strokeStyle = GOLD; c.globalAlpha = 0.8; c.lineWidth = 1.5; c.setLineDash([5, 4]);
+    if (ideal && ideal.heel >= x0 && ideal.heel <= x1) { c.save();
+      if (ideal.hi - ideal.lo > 1) { c.fillStyle = GOLD; c.globalAlpha = 0.08; c.fillRect(X(Math.max(x0, ideal.lo)), Tp, X(Math.min(x1, ideal.hi)) - X(Math.max(x0, ideal.lo)), h - Bm - Tp); }
+      c.strokeStyle = GOLD; c.globalAlpha = 0.8; c.lineWidth = 1.5; c.setLineDash([5, 4]);
       c.beginPath(); c.moveTo(X(ideal.heel), Tp); c.lineTo(X(ideal.heel), h - Bm); c.stroke(); c.restore();
-      c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); const right = X(ideal.heel) > w * 0.7; c.textAlign = right ? "right" : "left";
-      c.fillText(`ideal ≈ ${Math.round(ideal.heel)}°`, X(ideal.heel) + (right ? -6 : 6), Tp + 12); c.textAlign = "left"; }
-    for (const s of ser) { c.strokeStyle = s.color; c.fillStyle = s.color; c.lineWidth = 2; const ok = j => s.solid ? s.solid[j] : true;
+      c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); const right = X(ideal.heel) > w * 0.62; c.textAlign = right ? "right" : "left";
+      const rng = ideal.hi - ideal.lo > 1 ? ` (${Math.round(ideal.lo)}–${Math.round(ideal.hi)}°)` : "";
+      c.fillText(`ideal ≈ ${Math.round(ideal.heel)}°${rng}`, X(ideal.heel) + (right ? -6 : 6), Tp + 12);
+      c.font = "500 11px " + cssv("--f-data"); c.fillText(`${fmtClock(Math.round(ideal.sec))} of sailing`, X(ideal.heel) + (right ? -6 : 6), Tp + 27); c.textAlign = "left"; }
+    for (const s of ser) {
+      const top = Math.max(...s.sec.filter((_, j) => isFinite(s.y[j])), 1);
+      const lv = j => Math.sqrt(Math.min(1, s.sec[j] / top));            // 0..1, square root so mid-range bands still show
+      const al = j => 0.12 + 0.88 * lv(j);
+      c.strokeStyle = s.color; c.fillStyle = s.color; c.lineWidth = 2;
       let pj = null;
       s.y.forEach((v, j) => { if (!isFinite(v)) { pj = null; return; }
-        if (pj != null) { const sol = ok(pj) && ok(j); c.globalAlpha = sol ? 1 : 0.55; c.setLineDash(sol ? [] : [3, 3]); c.beginPath(); c.moveTo(X(s.x[pj]), Y(s.y[pj])); c.lineTo(X(s.x[j]), Y(v)); c.stroke(); }
+        if (pj != null) { c.globalAlpha = Math.min(al(pj), al(j)); c.beginPath(); c.moveTo(X(s.x[pj]), Y(s.y[pj])); c.lineTo(X(s.x[j]), Y(v)); c.stroke(); }
         pj = j; });
-      c.setLineDash([]);
-      s.y.forEach((v, j) => { if (!isFinite(v)) return; c.beginPath(); c.arc(X(s.x[j]), Y(v), ok(j) ? 2.5 : 2.2, 0, 7);
-        if (ok(j)) { c.globalAlpha = 1; c.fill(); } else { c.globalAlpha = 0.7; c.lineWidth = 1.2; c.stroke(); c.lineWidth = 2; } });
+      s.y.forEach((v, j) => { if (!isFinite(v)) return; c.globalAlpha = al(j); c.beginPath(); c.arc(X(s.x[j]), Y(v), 1.8 + 2.4 * lv(j), 0, 7);
+        if (s.sec[j] >= 6) c.fill(); else { c.lineWidth = 1.2; c.stroke(); c.lineWidth = 2; } });
       c.globalAlpha = 1; } };
-  scatter("advHeel", binSeries(hv, j => j + HEEL0 + 0.5, 2, 6), "heel to leeward °", "VMG kt", "No steady upwind sailing in the races picked.", idealHeel(hv));
-  scatter("advHeelDn", binSeries(hd, j => j + HEEL0 + 0.5, 2, 6), "heel to leeward °", "VMG kt", "No steady downwind sailing in the races picked.", idealHeel(hd));
+  scatter("advHeel", binSeries(hv, j => j + HEEL0 + 0.5, 2), "heel to leeward °", "VMG kt", "No steady upwind sailing in the races picked.", idealHeel(hv));
+  scatter("advHeelDn", binSeries(hd, j => j + HEEL0 + 0.5, 2), "heel to leeward °", "VMG kt", "No steady downwind sailing in the races picked.", idealHeel(hd));
 }
 let ADVS = null;
 function advStartUi() {
