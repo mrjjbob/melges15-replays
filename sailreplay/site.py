@@ -9,7 +9,7 @@ Build a whole fleet website from a folder of .vkx logs.
 
 Output:
   index.html            every racing day by series, newest first, plus how to add your own files
-  results.html          preliminary series standings from the uploaded data
+  results.html          series scores: the club scoring sheet where added, otherwise from the uploaded data
   days/YYYY-MM-DD.html  replay + debrief of every race that day, all boats together
 """
 from __future__ import annotations
@@ -320,7 +320,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         "boat_count": len({b for d in home_days for b in d["boats"]}),
         "series": [{"name": x["name"], "start": x.get("start"), "end": x.get("end")} for x in series_cfg],
         "links": site_cfg.get("links") or [],
-        "results_note": site_cfg.get("results_note", "Preliminary results from the uploaded Atlas data. Subject to change after the weekly results email."),
+        "results_note": site_cfg.get("results_note", "A day not yet on the club's scoring sheet is scored from the uploaded Atlas data, so it may change when the sheet is added."),
     }
     for d in days:
         d.pop("race_rows", None)
@@ -334,7 +334,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         + page + "\n</body>\n</html>\n", encoding="utf-8")
     res = {"title": manifest["title"], "club": manifest["club"], "note": manifest["results_note"], "links": manifest["links"],
            "updated": manifest["updated"], "standings": standings, "upload_url": upload_url}
-    page = RESULTS_TEMPLATE.read_text(encoding="utf-8").replace("__TITLE__", html.escape(manifest["title"] + " results"))
+    page = RESULTS_TEMPLATE.read_text(encoding="utf-8").replace("__TITLE__", html.escape(manifest["title"] + " scores"))
     page = page.replace("__RESULTS_JSON__", json.dumps(res, separators=(",", ":")).replace("</", "<\\/"))
     (out / "results.html").write_text(
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'

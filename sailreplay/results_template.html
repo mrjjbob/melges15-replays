@@ -74,7 +74,7 @@ tr:last-child td { border-bottom: 0; }
   <header>
     <img class="logo" src="logo.png" alt="Melges 15">
     <span class="eyebrow" id="club"></span>
-    <h1 id="h1">Preliminary results</h1>
+    <h1 id="h1">Scores</h1>
   </header>
   <div class="notice"><b id="badge">Preliminary</b><p id="note"></p></div>
   <div id="series"></div>
@@ -98,8 +98,7 @@ $("note").textContent = allRaces.length && nOff === allRaces.length
   ? "Official results from the club's scoring sheet."
   : nOff ? D.note + " Days marked Official are from the club's scoring sheet." : D.note;
 if (allRaces.length && nOff === allRaces.length) {
-  $("h1").textContent = "Results"; $("badge").textContent = "Official"; $("prelim-how").hidden = true;
-  document.title = document.title.replace(/preliminary /i, "");
+  $("badge").textContent = "Official"; $("prelim-how").hidden = true;
 }
 const off = (D.links || []).find(l => /result/i.test(l.label));
 if (off) $("note").insertAdjacentHTML("beforeend", ` <a href="${esc(off.url)}">Official results</a>`);
