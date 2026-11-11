@@ -1231,17 +1231,32 @@ function drawAdvanced() {
 
   // tacks and gybes overlaid at head to wind / dead downwind
   for (const [kind, id] of [["tack", "advTacks"], ["gybe", "advGybes"]]) {
-    // the wind for each one is halfway between the heading going in (10 s to 4 s before) and coming
-    // out (8 s to 20 s after), from the track itself; a gybe's bisector points downwind
-    const brgOf = (B, a, b) => (a >= 0 && b < B.n && isFinite(B.x[a]) && isFinite(B.x[b])) ? Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI : null;
-    const ev = advEvents(kind).map(e => { const { P, B, i0 } = e;
-      const bin = brgOf(B, i0 - 10 * P.hz, i0 - 4 * P.hz), bout = brgOf(B, i0 + 8 * P.hz, i0 + 20 * P.hz);
-      if (bin == null || bout == null) return null;
-      const d = ((bout - bin + 540) % 360) - 180, mid = bin + d / 2;
-      const twd = kind === "tack" ? mid : mid + 180;
-      const side = Math.sign(((twd - bin + 540) % 360) - 180) || 1;    // + = came in with the wind on starboard
-      return { ...e, twd, side, ang: Math.abs(d) }; }).filter(Boolean);
-    const angs = ev.map(e => e.ang).sort((x, y) => x - y), alpha = angs.length ? angs[Math.floor(angs.length / 2)] : null;
+    // The wind for each one is halfway between the heading going in and coming out, read from the
+    // track. Each heading is read only between this boat's own manoeuvres (going in: up to 12 s before,
+    // after the previous tack, gybe or rounding has settled; coming out: from 6 s after, until the
+    // next one starts), so back-to-back tacks don't pull it round. If one side is too short to read,
+    // the other side and the fleet's median turn angle stand in. A gybe's bisector points downwind.
+    const brgOf = (B, a, b) => { while (a < b && !isFinite(B.x[a])) a++; while (b > a && !isFinite(B.x[b])) b--;
+      return b - a >= 2 && Math.hypot(B.x[b] - B.x[a], B.y[b] - B.y[a]) > 3 ? Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI : null; };
+    const wrap = a => ((a + 540) % 360) - 180;
+    const ev = advEvents(kind).map(e => { const { P, B, i0 } = e, hz = P.hz;
+      const ts = B.b.manoeuvres.map(m => Math.round(m.t * hz)).filter(i => i !== i0).sort((x, y) => x - y);
+      const prev = ts.filter(i => i < i0).pop(), next = ts.find(i => i > i0);
+      const a0 = Math.max(0, i0 - 12 * hz, prev != null ? prev + 6 * hz : -Infinity), a1 = i0 - 3 * hz;
+      const b0 = i0 + 6 * hz, b1 = Math.min(B.n - 1, i0 + 20 * hz, next != null ? next - 3 * hz : Infinity);
+      const bin = a1 - a0 >= 2 * hz ? brgOf(B, a0, a1) : null, bout = b1 - b0 >= 2 * hz ? brgOf(B, b0, b1) : null;
+      let tw = 0, nn = 0; for (let i = Math.max(0, i0 - 8 * hz); i < i0 - 2 * hz; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
+      return { ...e, bin, bout, side: Math.sign(tw) || 1 }; });
+    const full = ev.filter(e => e.bin != null && e.bout != null).map(e => Math.abs(wrap(e.bout - e.bin))).sort((x, y) => x - y);
+    const alpha = full.length ? full[Math.floor(full.length / 2)] : (kind === "tack" ? 90 : 90);
+    for (const e of ev) {
+      // side: + = came in with the wind on starboard, so it turned to port (anticlockwise) through the wind
+      if (e.bin != null && e.bout != null) { const d = wrap(e.bout - e.bin); e.ang = Math.abs(d); e.mid = e.bin + d / 2; }
+      else if (e.bin != null) e.mid = e.bin + (kind === "tack" ? e.side : -e.side) * alpha / 2;
+      else if (e.bout != null) e.mid = e.bout - (kind === "tack" ? e.side : -e.side) * alpha / 2;
+      else { e.twd = e.P.twdAt(e.i0); continue; }
+      e.twd = kind === "tack" ? e.mid : e.mid + 180;
+    }
     const paths = ev.map(({ P, B, i0, twd, side }) => ({ color: col(P, B), alpha: 0.7,
       pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], twd, ADV.mirror && side < 0) }));
     advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
