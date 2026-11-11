@@ -55,6 +55,8 @@ A file that is already there is not added twice. Anything that is not a `.vkx`, 
 
 **GPS watches.** A `.fit` file (or the `.zip` Garmin Connect's **Export File** saves, whose `.fit` files are taken out and added) is named by Garmin, for example `25046482066_ACTIVITY.fit`, and says nothing about the boat. So a watch file is only accepted with a sail number in the subject or a boat picked on the page, and is saved as `900_Hafen__25046482066_ACTIVITY.fit`. One file per race is fine: the site joins a boat's files for the day.
 
+**Phone recordings.** A `.zip` with `.csv` files in it and no `.fit` (the "zipped CSV" export of the Sensor Logger app) is kept in `incoming/phone/`, named by sail number, and the sender is told it isn't on the site yet. The upload page asks for a few so phone support can be added and checked against real recordings.
+
 ## Updating the script
 
 The script runs from the copy pasted into script.google.com, not from this folder. After `Code.gs` or `Upload.html` changes here, paste both into the editor again, save, then **Deploy → Manage deployments → ✎ (edit) → Version: New version → Deploy**. The web app URL stays the same.

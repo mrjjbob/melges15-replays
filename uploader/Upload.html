@@ -16,16 +16,18 @@
   button { font: 700 18px/1 -apple-system, "Segoe UI", system-ui, sans-serif; color: #12202b; background: var(--accent); border: 0; border-radius: 12px; padding: 16px; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-  li { background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+  ul li { background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+  ol { margin: 0 0 12px; padding-left: 22px; } ol li { margin: 4px 0; }
   li.ok b { color: var(--good); } li.bad b { color: var(--bad); }
   .alt { border-top: 1px solid var(--rule); padding-top: 16px; }
+  .alt p { margin: 0 0 12px; }
   a { color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>Upload your race</h1>
-  <p>Pick your boat and your <b>.vkx</b> file from Vakaros Connect, or a GPS watch's <b>.fit</b> / <b>.zip</b> (one per race is fine, pick them all at once). It shows up on the site in about 3 minutes.</p>
+  <p>Pick your boat and your <b>.vkx</b> file from Vakaros Connect, or a GPS watch's <b>.fit</b> / <b>.zip</b> (one per race is fine, pick them all at once), or a phone recording (see below). It shows up on the site in about 3 minutes.</p>
 
   <label>Your boat
     <select id="sail">
@@ -45,6 +47,13 @@
 
   <div class="alt">
     <p><b>Easier from your phone:</b> in Vakaros Connect open the session, tap Share, choose Mail and send it to <b><?= email ?></b>. Put your sail number in the subject.</p>
+    <p><b>No Vakaros or watch? Try your phone.</b> The free <b>Sensor Logger</b> app (iPhone and Android) records GPS and how the boat heels. We are collecting the first recordings to add them to the site, so send yours:</p>
+    <ol>
+      <li>In Sensor Logger turn on <b>Location</b>, <b>Orientation</b> and <b>Compass</b> (the rest can stay off).</li>
+      <li>Put the phone in a waterproof case and strap it <b>flat to the deck, screen up, along the centreline</b>, not in a pocket.</li>
+      <li>At the dock with the boat level, zero the orientation, then start recording before the first warning. One recording for the whole day.</li>
+      <li>Afterwards export it as <b>zipped CSV</b> and upload the zip here, or email it with your sail number in the subject.</li>
+    </ol>
     <p><b>GPS watch (Garmin):</b> in Garmin Connect on a computer, open each race's activity, click the gear icon and choose <b>Export File</b>. Upload the files it saves here. For the best track, set the watch's Data Recording to <b>Every Second</b>.</p>
   </div>
   <? if (site) { ?><p><a href="<?= site ?>">Back to the race site</a></p><? } ?>

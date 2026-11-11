@@ -83,7 +83,12 @@ function addLog_(bytes, filename, sail) {
     try { files = Utilities.unzip(Utilities.newBlob(bytes, 'application/zip', filename)); }
     catch (e) { return 'that .zip could not be opened'; }
     const fits = files.filter(f => /\.fit$/i.test(f.getName()));
-    if (!fits.length) return 'there is no .fit file in that .zip';
+    if (!fits.length) {
+      // a phone recording (Sensor Logger's zipped CSV export): the site can't read these yet, so keep
+      // them in incoming/phone/ for when it can, instead of turning the sailor away
+      if (files.some(f => /\.csv$/i.test(f.getName()))) return savePhone_(bytes, filename, sail);
+      return 'there is no .fit file in that .zip';
+    }
     const res = fits.map(f => addLog_(f.getBytes(), f.getName().split('/').pop(), sail));
     if (fits.length === 1) return res[0];
     const added = res.filter(r => r === 'added').length;
@@ -105,6 +110,23 @@ function addLog_(bytes, filename, sail) {
     branch: prop_('BRANCH', 'main'),
   });
   if (put.code === 201 || put.code === 200) return 'added';
+  return 'GitHub said ' + put.code + (put.json && put.json.message ? ': ' + put.json.message : '');
+}
+
+/** Keep a phone recording (zipped CSV) in incoming/phone/ until the site can read it. */
+function savePhone_(bytes, filename, sail) {
+  const boat = sail && fleet_().find(b => String(b.sail) === String(sail));
+  if (!boat) return 'which boat is this? Put your sail number in the subject (or pick your boat on the upload page)';
+  const name = clean_(boat.sail + '_' + boat.name) + '__' + clean_(filename.replace(/\.zip$/i, ''));
+  const path = 'incoming/phone/' + name + '.zip';
+  const exists = gh_('get', '/contents/' + encodeURI(path) + '?ref=' + prop_('BRANCH', 'main'));
+  if (exists.code === 200) return 'already there';
+  const put = gh_('put', '/contents/' + encodeURI(path), {
+    message: 'Phone recording ' + name + '.zip (' + boat.sail + ' ' + boat.name + ')',
+    content: Utilities.base64Encode(bytes),
+    branch: prop_('BRANCH', 'main'),
+  });
+  if (put.code === 201 || put.code === 200) return 'saved, thanks! Phone recordings are not on the site yet; yours will be used to add them';
   return 'GitHub said ' + put.code + (put.json && put.json.message ? ': ' + put.json.message : '');
 }
 
@@ -135,7 +157,7 @@ function checkMail() {
       });
       const site = prop_('SITE_URL', '');
       if (lines.length) {
-        const ok = lines.some(l => /: added$/.test(l));
+        const ok = lines.some(l => /: (added|saved)/.test(l));
         msg.reply((ok ? 'Thanks, got it.\n\n' : 'Thanks.\n\n') + lines.join('\n') +
           (ok ? '\n\nYour races will be on the site in about 3 minutes:\n' + site : '') +
           (sail ? '' : '\n\nTip: put your sail number in the subject so the file is always matched to your boat.'));
@@ -177,5 +199,5 @@ function uploadFromPage(f) {
     return { ok: false, msg: 'Wrong fleet password.' };
   }
   const result = addLog_(Utilities.base64Decode(f.data), f.name, f.sail);
-  return { ok: result === 'added' || result === 'already there', msg: result };
+  return { ok: result === 'added' || result === 'already there' || /^saved/.test(result), msg: result };
 }
