@@ -1171,7 +1171,7 @@ function renderAdvanced() {
   h += `<div><h2>Starts</h2><div class="charts"><div class="chartcard wide"><h3>Every start</h3><p class="note">Every race's start played together, from a minute before the gun to 30 s after. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.</p>
     <div class="advplay"><button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button><input type="range" id="advStartT" min="-60" max="30" step="0.5" value="${ADV.startT}" aria-label="Time from the gun"><span class="t" id="advStartLbl"></span></div>
     <canvas id="advStarts" class="tall"></canvas><div class="legend">${advLegend(byPlace)}</div></div></div></div>`;
-  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own heading going in: the wind is taken as the fleet's average entry angle off that heading, so every boat comes in at the same angle and a shift during the manoeuvre shows in the exit. Exiting higher than you came in is a lift, lower a header.</p><div class="charts">
+  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own track: the wind is taken as halfway between its heading going in (10 s to 4 s before) and coming out (8 s to 20 s after), so a shift during the manoeuvre is taken out and every one sits square to the wind. How wide it opens is the angle the boat turned through.</p><div class="charts">
     ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place")}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="advbar">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div><div class="charts">
@@ -1231,18 +1231,22 @@ function drawAdvanced() {
 
   // tacks and gybes overlaid at head to wind / dead downwind
   for (const [kind, id] of [["tack", "advTacks"], ["gybe", "advGybes"]]) {
-    // entry heading from the track 10 s to 4 s before; which tack from the wind angle then
-    const ev = advEvents(kind).map(e => { const { P, B, i0 } = e, a = i0 - 10 * P.hz, b = i0 - 4 * P.hz;
-      if (a < 0 || !isFinite(B.x[a]) || !isFinite(B.x[b])) return null;
-      let tw = 0, nn = 0; for (let i = a; i <= b; i++) if (isFinite(B.twa[i])) { tw += B.twa[i]; nn++; }
-      if (!nn) return null;
-      return { ...e, brg: Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI, side: Math.sign(tw), ang: Math.abs(tw / nn) }; }).filter(Boolean);
+    // the wind for each one is halfway between the heading going in (10 s to 4 s before) and coming
+    // out (8 s to 20 s after), from the track itself; a gybe's bisector points downwind
+    const brgOf = (B, a, b) => (a >= 0 && b < B.n && isFinite(B.x[a]) && isFinite(B.x[b])) ? Math.atan2(B.x[b] - B.x[a], B.y[b] - B.y[a]) * 180 / Math.PI : null;
+    const ev = advEvents(kind).map(e => { const { P, B, i0 } = e;
+      const bin = brgOf(B, i0 - 10 * P.hz, i0 - 4 * P.hz), bout = brgOf(B, i0 + 8 * P.hz, i0 + 20 * P.hz);
+      if (bin == null || bout == null) return null;
+      const d = ((bout - bin + 540) % 360) - 180, mid = bin + d / 2;
+      const twd = kind === "tack" ? mid : mid + 180;
+      const side = Math.sign(((twd - bin + 540) % 360) - 180) || 1;    // + = came in with the wind on starboard
+      return { ...e, twd, side, ang: Math.abs(d) }; }).filter(Boolean);
     const angs = ev.map(e => e.ang).sort((x, y) => x - y), alpha = angs.length ? angs[Math.floor(angs.length / 2)] : null;
-    const paths = ev.map(({ P, B, i0, brg, side }) => ({ color: col(P, B), alpha: 0.7,
-      pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], brg + side * alpha, ADV.mirror && side < 0) }));
+    const paths = ev.map(({ P, B, i0, twd, side }) => ({ color: col(P, B), alpha: 0.7,
+      pts: advPathAround(P, B, i0, -10, 30, B.x[i0], B.y[i0], twd, ADV.mirror && side < 0) }));
     advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
       over: (c, sx, sy, sc, w) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill();
-        c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "right"; c.fillText(`entry ${Math.round(alpha)}° off the wind`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } });
+        c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "right"; c.fillText(`median ${kind === "tack" ? "tacking" : "gybing"} angle ${Math.round(alpha)}°`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } });
   }
 
   // roundings
