@@ -25,7 +25,7 @@
 <body>
 <main>
   <h1>Upload your race</h1>
-  <p>Pick your boat and your <b>.vkx</b> file from Vakaros Connect. It shows up on the site in about 3 minutes.</p>
+  <p>Pick your boat and your <b>.vkx</b> file from Vakaros Connect, or a GPS watch's <b>.fit</b> / <b>.zip</b> (one per race is fine, pick them all at once). It shows up on the site in about 3 minutes.</p>
 
   <label>Your boat
     <select id="sail">
@@ -39,12 +39,13 @@
   <label>Fleet password <input type="password" id="pw" autocomplete="current-password"></label>
   <? } ?>
 
-  <div class="drop"><input type="file" id="file" accept=".vkx,application/octet-stream" multiple></div>
+  <div class="drop"><input type="file" id="file" accept=".vkx,.fit,.zip,application/octet-stream,application/zip" multiple></div>
   <button id="go" disabled>Upload</button>
   <ul id="out"></ul>
 
   <div class="alt">
     <p><b>Easier from your phone:</b> in Vakaros Connect open the session, tap Share, choose Mail and send it to <b><?= email ?></b>. Put your sail number in the subject.</p>
+    <p><b>GPS watch (Garmin):</b> in Garmin Connect on a computer, open each race's activity, click the gear icon and choose <b>Export File</b>. Upload the files it saves here. For the best track, set the watch's Data Recording to <b>Every Second</b>.</p>
   </div>
   <? if (site) { ?><p><a href="<?= site ?>">Back to the race site</a></p><? } ?>
 </main>

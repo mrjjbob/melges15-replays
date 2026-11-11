@@ -235,11 +235,17 @@ def _resolve_boats(specs: list[str], boats_cfg: dict):
                     cfg = v
         name = name or cfg.get("name") or re.sub(r"_\d{8}_\d{4}_s\d+$", "", stem).replace("_", " ").title()
         out.append((name, p, cfg))
-    names = [n for n, _, _ in out]
-    for n in set(names):
-        if names.count(n) > 1:
-            sys.exit(f"Two logs are both called {n!r}. Name them, e.g. \"{n} 2=path.vkx\".")
     return out
+
+
+def _load_boats(resolved) -> list:
+    """(name, log) per boat. Several files with the same boat name (a watch's one file per race,
+    or an Atlas log plus a watch) are joined into one log for that boat."""
+    from .site import merge_logs
+    by_name: dict = {}
+    for n, p, _ in resolved:
+        by_name.setdefault(n, []).append(vkx.parse_file(p))
+    return [(n, merge_logs(ls, n)) for n, ls in by_name.items()]
 
 
 def _parse_gun(s: str, logs) -> int:
@@ -259,8 +265,8 @@ def _parse_gun(s: str, logs) -> int:
 def cmd_race(args) -> None:
     cfg = load_boats(args.boats)
     resolved = _resolve_boats(args.files, cfg)
-    boats = [(n, vkx.parse_file(p)) for n, p, _ in resolved]
-    for (n, p, _), (_, log) in zip(resolved, boats):
+    boats = _load_boats(resolved)
+    for n, log in boats:
         print(f"{n:16s} {log.summary()}")
     colors = {n: c["color"] for n, _, c in resolved if c.get("color")}
     heel = {n: float(c.get("heel_offset", 0)) for n, _, c in resolved}
@@ -307,8 +313,8 @@ def cmd_race(args) -> None:
 def cmd_day(args) -> None:
     cfg = load_boats(args.boats)
     resolved = _resolve_boats(args.files, cfg)
-    boats = [(n, vkx.parse_file(p)) for n, p, _ in resolved]
-    for (n, p, _), (_, log) in zip(resolved, boats):
+    boats = _load_boats(resolved)
+    for n, log in boats:
         print(f"{n:16s} {log.summary()}")
     colors = {n: c["color"] for n, _, c in resolved if c.get("color")}
     heel = {n: float(c.get("heel_offset", 0)) for n, _, c in resolved}
@@ -366,7 +372,7 @@ def main(argv=None) -> None:
     d.add_argument("--min-sailing", type=float, default=10, help="keep sessions with at least this many minutes of sailing (default 10)")
     d.set_defaults(func=cmd_download)
 
-    i = sub.add_parser("info", help="summarise .vkx files")
+    i = sub.add_parser("info", help="summarise .vkx or .fit files")
     i.add_argument("files", nargs="+")
     i.add_argument("-v", "--verbose", action="store_true")
     i.set_defaults(func=cmd_info)
@@ -377,7 +383,7 @@ def main(argv=None) -> None:
     c.set_defaults(func=cmd_csv)
 
     r = sub.add_parser("race", help="build the replay page for one race")
-    r.add_argument("files", nargs="+", help='.vkx files, optionally "Boat name=file.vkx"')
+    r.add_argument("files", nargs="+", help='.vkx or .fit files, optionally "Boat name=file.vkx"; repeat a name to join its files')
     r.add_argument("-o", "--out", default="race.html")
     r.add_argument("--title")
     r.add_argument("--race", type=int, help="which start in the logs (1 = first)")
@@ -390,7 +396,7 @@ def main(argv=None) -> None:
     r.set_defaults(func=cmd_race)
 
     dd = sub.add_parser("day", help="every race in the logs on one page")
-    dd.add_argument("files", nargs="+", help='.vkx files, optionally "Boat name=file.vkx"')
+    dd.add_argument("files", nargs="+", help='.vkx or .fit files, optionally "Boat name=file.vkx"; repeat a name to join its files')
     dd.add_argument("-o", "--out", default="day.html")
     dd.add_argument("--title")
     dd.add_argument("--twd", type=float, help="true wind direction for every race, if you know it")
@@ -399,7 +405,7 @@ def main(argv=None) -> None:
     dd.set_defaults(func=cmd_day)
 
     st = sub.add_parser("site", help="build the fleet website from a folder of logs")
-    st.add_argument("logs", nargs="?", default="logs", help="folder of .vkx files (default logs/)")
+    st.add_argument("logs", nargs="?", default="logs", help="folder of .vkx and .fit files (default logs/)")
     st.add_argument("-o", "--out", default="_site")
     st.add_argument("--config", default="site.json", help="site settings (title, club, timezone)")
     st.add_argument("--fleet", default="fleet.json", help="fleet list: sail numbers, names, Atlas serials")

@@ -72,6 +72,8 @@ class VkxLog:
     declination: list[dict] = field(default_factory=list) # 0x03
     unknown_bytes: int = 0
     row_counts: dict = field(default_factory=dict)
+    device: str = "atlas"          # "atlas", or "watch" for a GPS watch (.fit): no heel, no compass
+    device_name: str = "Atlas"
 
     @property
     def start_ms(self) -> int | None:
@@ -179,8 +181,16 @@ def _dedupe_track(log: VkxLog) -> None:
     log.track = out
 
 
+# Files the site reads: Atlas logs, and GPS-watch activities (.fit, or the .zip Garmin exports)
+LOG_SUFFIXES = (".vkx", ".fit", ".zip")
+
+
 def parse_file(path: str | Path) -> VkxLog:
+    """Read an Atlas .vkx, or a GPS watch's .fit (or Garmin's .zip export) into the same shape."""
     path = Path(path)
+    if path.suffix.lower() in (".fit", ".zip"):
+        from .fit import parse_fit
+        return parse_fit(path)
     return parse_bytes(path.read_bytes(), source=path.name)
 
 
