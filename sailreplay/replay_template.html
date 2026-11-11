@@ -151,7 +151,10 @@ tr.jumprace .flag { color: var(--accent); }
 .chartcard.wide { grid-column: 1 / -1; }
 .chartcard canvas.tall { height: 520px; }
 .advbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
-.advplay { display: flex; gap: 12px; align-items: center; margin: 4px 0 10px; }
+.advplay { display: flex; gap: 12px; align-items: center; margin: 10px 0 0; }
+.ovwrap { position: relative; }
+.ovtools { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-start; max-width: calc(100% - 20px); }
+.ovtools.r { left: auto; right: 10px; justify-content: flex-end; }
 .advplay input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .advplay .t { font: 500 13px/1 var(--f-data); color: var(--muted); min-width: 120px; text-align: right; }
 .advbar .k { font: 600 12px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); min-width: 64px; }
@@ -184,7 +187,8 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   /* header stays pinned on phones, same on Replay and Debrief */
   body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel); }
   .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; padding-block: 8px;
-         display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title clock" "races tabs"; gap: 8px 10px; }
+         display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title clock" "tabs tabs" "races races"; gap: 8px 10px; }
+  .tabs button { flex: 1; }
   .top .logo { display: none; }
   .title { grid-area: title; min-width: 0; }
   .clock { grid-area: clock; margin-left: 0; align-self: center; }
@@ -194,7 +198,6 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
   .title .sub { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .clock .lbl { font-size: 10.5px; }
   .races { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .races[hidden] + .tabs { grid-column: 1 / -1; justify-self: start; }
   .races button { min-width: 38px; padding: 7px 8px; }
   .tabs button { padding: 7px 10px; }
   .debrief .inner { padding-block: 16px 40px; gap: 22px; }
@@ -212,12 +215,12 @@ select { background: var(--panel-2); border: 1px solid var(--rule); color: var(-
 <div class="app">
   <header class="top">
     <div class="title"><a class="home" id="home" href="../index.html" hidden>← All days</a><h1 id="title"></h1><div class="sub" id="sub"></div></div>
-    <nav class="races" id="races" aria-label="Races" hidden></nav>
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-replay" aria-selected="true">Replay</button>
       <button role="tab" id="tab-debrief" aria-selected="false">Debrief</button>
       <button role="tab" id="tab-advanced" aria-selected="false">Advanced</button>
     </div>
+    <nav class="races" id="races" aria-label="Races" hidden></nav>
     <div class="clock"><span class="lbl" id="clockLbl">Race time</span><span class="val" id="clock">0:00</span></div>
   </header>
 
@@ -812,6 +815,12 @@ function show(v) {
   const deb = v === "debrief", adv = v === "advanced", rep = !deb && !adv;
   document.querySelector(".transport").hidden = !rep;
   $("view-replay").hidden = !rep; $("view-debrief").hidden = !deb; $("view-advanced").hidden = !adv;
+  // the Advanced tab covers every race and has its own race picker; the race clock means nothing there
+  if (RACES.length > 1) $("races").hidden = adv;
+  document.querySelector(".top .clock").hidden = adv;
+  $("title").textContent = adv && DAY ? "All races" : M.title;
+  if (!$("sub").dataset.race) $("sub").dataset.race = $("sub").textContent;
+  $("sub").textContent = adv && DAY ? (M.day_title || DAY.title) + " · " + RACES.length + " races" : $("sub").dataset.race;
   $("tab-replay").setAttribute("aria-selected", String(rep)); $("tab-debrief").setAttribute("aria-selected", String(deb)); $("tab-advanced").setAttribute("aria-selected", String(adv));
   if (deb) { setPlaying(false); renderDebrief(); window.scrollTo(0, 0); }
   else if (adv) { setPlaying(false); renderAdvanced(); window.scrollTo(0, 0); }
@@ -1037,7 +1046,7 @@ function drawHeelChart() {
 
 // ---------- advanced: every race of the day, for the nerds
 // Settings live on window so they survive switching races (the page is rebuilt for each race).
-const ADV = window.__ADV || (window.__ADV = { races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false });
+const ADV = window.__ADV || (window.__ADV = { races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false, startOrient: "line" });
 let advDone = false;
 function advPrep(k) {
   const cache = window.__ADVC || (window.__ADVC = []);
@@ -1161,21 +1170,23 @@ function renderAdvanced() {
   <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
   ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
   <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}</div></div>`;
-  const card = (id, title, note, wide, tall, legend = true) => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;
+  const card = (id, title, note, wide, tall, legend = true, tools = "", below = "") => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><div class="ovwrap"><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${tools}</div>${below}${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;
   h += `<div><h2>Tack windows</h2><p class="note">Every tack averaged per boat, from 10 s before head to wind (0) to 30 s after. The VMG bump just before 0 is the boat shooting into the wind; the dip after is the cost of the tack.</p><div class="charts">
     ${card("advTackVmg", "VMG", "Knots towards the wind.")}${card("advTackSog", "Speed", "Knots over the ground.")}
     ${card("advTackTwa", "Wind angle", "Degrees off the wind, either tack.")}${card("advTackHeel", "Heel", "Degrees to leeward; it flips side at head to wind.")}</div></div>`;
   h += `<div><h2>Gybe windows</h2><p class="note">Every gybe averaged per boat, from 10 s before dead downwind (0) to 30 s after.</p><div class="charts">
     ${card("advGybeVmg", "VMG", "Knots away from the wind.")}${card("advGybeSog", "Speed", "Knots over the ground.")}
     ${card("advGybeTwa", "Wind angle", "Degrees off the wind, either gybe.")}${card("advGybeHeel", "Heel", "Degrees to leeward.")}</div></div>`;
-  h += `<div><h2>Starts</h2><div class="charts"><div class="chartcard wide"><h3>Every start</h3><p class="note">Every race's start played together, from a minute before the gun to 30 s after. Turned so the start line runs across and the course is up, centred on the middle of the line (dashed, one per race). Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.</p>
-    <div class="advplay"><button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button><input type="range" id="advStartT" min="-60" max="30" step="0.5" value="${ADV.startT}" aria-label="Time from the gun"><span class="t" id="advStartLbl"></span></div>
-    <canvas id="advStarts" class="tall"></canvas><div class="legend">${advLegend(byPlace)}</div></div></div></div>`;
-  h += `<div><h2>Tacks and gybes laid over each other</h2><div class="advbar">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div><p class="note">Each one is turned by the boat's own track: the wind is taken as halfway between its heading just before (6 s to 3 s) and just after (4 s to 8 s), so every one sits square to the wind and a second tack soon after doesn't pull it round. How wide it opens is the angle the boat turned through; what happens later in the 30 s is free to wander.</p><div class="charts">
-    ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place")}
-    ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place")}</div></div>`;
-  h += `<div><h2>Mark roundings</h2><div class="advbar">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div><div class="charts">
-    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark.", true, true, "place")}
+  const lineUp = ADV.startOrient === "line";
+  h += `<div><h2>Starts</h2><div class="charts">${card("advStarts", "Every start", `Every race's start played together, from a minute before the gun to 30 s after, centred on the middle of each start line (dashed, one per race). ${lineUp ? "Turned so every line runs straight across with the course up, to compare where on the line boats started." : "Turned so each race's wind at the gun is up, so a line that favoured one end shows tilted."} Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.`, true, true, "place",
+    `<div class="ovtools r">${chip("data-sorient", "line", lineUp, "Line across")}${chip("data-sorient", "wind", !lineUp, "Wind up")}<button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button></div>`,
+    `<div class="advplay"><input type="range" id="advStartT" min="-60" max="30" step="0.5" value="${ADV.startT}" aria-label="Time from the gun"><span class="t" id="advStartLbl"></span></div>`)}</div></div>`;
+  const mirrorChip = `<div class="ovtools">${chip("data-mirror", "1", ADV.mirror, "Mirror to one side")}</div>`;
+  h += `<div><h2>Tacks and gybes laid over each other</h2><p class="note">Each one is turned by the boat's own track: the wind is taken as halfway between its heading just before (6 s to 3 s) and just after (4 s to 8 s), so every one sits square to the wind and a second tack soon after doesn't pull it round. How wide it opens is the angle the boat turned through; what happens later in the 30 s is free to wander.</p><div class="charts">
+    ${card("advTacks", "Every tack", `From 10 s before head to wind to 30 s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one.`, false, true, "place", mirrorChip)}
+    ${card("advGybes", "Every gybe", `From 10 s before dead downwind to 30 s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""}`, false, true, "place", mirrorChip)}</div></div>`;
+  h += `<div><h2>Mark roundings</h2><div class="charts">
+    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div>`)}
     ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Speed and heel</h2><div class="charts">
@@ -1191,6 +1202,7 @@ function renderAdvanced() {
   el.querySelectorAll("[data-colour]").forEach(b => b.onclick = () => { ADV.colour = b.dataset.colour; renderAdvanced(); });
   el.querySelectorAll("[data-mirror]").forEach(b => b.onclick = () => { ADV.mirror = !ADV.mirror; renderAdvanced(); });
   el.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => { ADV.mark = b.dataset.mark; renderAdvanced(); });
+  el.querySelectorAll("[data-sorient]").forEach(b => b.onclick = () => { ADV.startOrient = b.dataset.sorient; renderAdvanced(); });
   $("advStartPlay").onclick = () => { ADV.playing = !ADV.playing; if (ADV.playing && (ADV.startT >= 30 || !ADV.played)) ADV.startT = -60; ADV.played = true; advStartUi(); if (ADV.playing) advStartLoop(); };
   $("advStartT").oninput = e => { ADV.startT = +e.target.value; ADV.playing = false; ADV.played = true; advStartUi(); drawStarts(); };
   advDone = true; drawAdvanced();
@@ -1215,7 +1227,7 @@ function drawAdvanced() {
       const a = P.xy(L[0][0], L[0][1]), b = P.xy(L[1][0], L[1][1]); O = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       const dx = b[0] - a[0], dy = b[1] - a[1], tw = P.twdAt(P.gunI) * Math.PI / 180;
       let nx = dy, ny = -dx; if (nx * Math.sin(tw) + ny * Math.cos(tw) < 0) { nx = -nx; ny = -ny; }
-      deg = Math.atan2(nx, ny) * 180 / Math.PI;
+      deg = ADV.startOrient === "wind" ? P.twdAt(P.gunI) : Math.atan2(nx, ny) * 180 / Math.PI;
       lines.push([rotTo(a[0] - O[0], a[1] - O[1], deg), rotTo(b[0] - O[0], b[1] - O[1], deg)]);
     } else {
       const at = P.boats.filter(B => isFinite(B.x[P.gunI])); if (!at.length) continue;
@@ -1332,7 +1344,7 @@ function drawStarts() {
   for (const p of ADVS.paths) paths.push({ color: p.color, pts: p.pts, alpha: 0.13, glyph: false });
   for (const p of ADVS.paths) { const seg = p.pts.slice(j0, j + 1); if (seg.length && isFinite(seg[seg.length - 1][0])) paths.push({ color: p.color, pts: seg, alpha: 0.95 }); }
   const lines = ADVS.lines;
-  advOverlay("advStarts", paths, { up: "course", extent: lines.flat(), empty: "No starts in the races picked.",
+  advOverlay("advStarts", paths, { up: ADV.startOrient === "wind" ? "wind" : "course", extent: lines.flat(), empty: "No starts in the races picked.",
     under: (c, sx, sy) => { c.setLineDash([5, 5]); c.strokeStyle = t >= 0 ? "rgba(242,179,61,.85)" : "rgba(242,179,61,.5)"; c.lineWidth = t >= 0 ? 1.6 : 1.2;
       for (const [a, b] of lines) { c.beginPath(); c.moveTo(sx(a[0]), sy(a[1])); c.lineTo(sx(b[0]), sy(b[1])); c.stroke(); c.fillStyle = "rgba(242,179,61,.8)"; for (const p of [a, b]) { c.beginPath(); c.arc(sx(p[0]), sy(p[1]), 2.5, 0, 7); c.fill(); } }
       c.setLineDash([]); },

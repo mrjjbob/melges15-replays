@@ -33,7 +33,7 @@ Averages (upwind and downwind speed, VMG, wind angle and heel, per race and per 
 Each day page has an **Advanced** tab that lays every race over each other, with race and boat filters:
 
 - Tack and gybe windows: VMG, speed, wind angle and heel from 10 s before to 30 s after, averaged per boat
-- Every start, turned so the line runs across with the course up, with play, a time slider and looping; colour by finish place to look for a winning pattern
+- Every start, centred on the middle of each line and turned so the line runs across with the course up, or so each race's wind at the gun is up; with play, a time slider and looping; colour by finish place to look for a winning pattern
 - Every tack and every gybe overlaid at head to wind or dead downwind. Each is turned so the wind is halfway between the boat's heading just before (6 s to 3 s) and just after (4 s to 8 s), read close in and only between that boat's own manoeuvres, so back-to-back tacks stay square; if one side is too short to read, the other side and the fleet's median turn angle stand in. Mirroring to one side is optional
 - Every windward or leeward rounding overlaid on the mark, with the three-length zone, speed and wind angle through it and a table of entry and exit speeds
 - Steady speed by wind angle, and upwind and downwind VMG by heel (1° bands; bands with under 6 s of data are drawn dashed) across all the races picked
