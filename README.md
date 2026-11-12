@@ -64,6 +64,7 @@ Each day page has an **Advanced** tab that lays every race over each other, with
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - **Official results:** put the club's scoring workbook (`.xlsx`) in `results/`. Each Melges 15 table in it (a date, a `MELGES 15` row with race numbers and TOTAL, one row per boat, then an optional weather line) replaces the preliminary scores for that day, and the results page marks the day Official. Boats are matched by sail number. A sheet dated up to three days after a racing day is used for that day. Add the updated workbook each week, under the same name to replace it.
 - **Other races:** the home page lists only days in a series. Everything else (practice, test sessions, racing outside the season) is on `other.html`, linked from the home page footer as "Other races". Dates in `hidden_days` are moved there too, even inside a series. Their replay pages are built the same way.
+- **Multi-day events:** `"events": [{"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton"}]` boxes those days together on the list, with the dates, total races and place. Label each day `"<event> · Day 1"` and the box shows just "Day 1".
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
 ### Recalls and penalty turns

@@ -81,6 +81,10 @@ a.day:hover { border-color: var(--muted); background: var(--water-2); }
 .add p { margin: 0; }
 .btn { display: inline-flex; justify-content: center; align-items: center; gap: 8px; background: var(--accent); color: #1a1205; font: 700 17px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 14px 18px; border-radius: 10px; text-decoration: none; }
 code { font: 500 13px var(--f-data); background: var(--water); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+.eventbox { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--panel-2) 40%, transparent); }
+.evhead { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 2px 6px 0; }
+.evhead b { font: 700 20px/1.1 var(--f-display); }
+.evhead span { color: var(--muted); font-size: 13px; }
 .empty { padding: 32px 20px; border: 1px dashed var(--rule); border-radius: 12px; color: var(--muted); }
 .problems { margin-top: 18px; color: var(--muted); font-size: 13.5px; }
 .problems summary { cursor: pointer; }
@@ -179,9 +183,24 @@ for (const g of groups) {
   const list = sec.querySelector(".days");
   if (!g.days.length && g.tba) list.remove();
   else if (!g.days.length) list.innerHTML = `<div class="empty">No racing days yet. Upload a <code>.vkx</code> file after sailing and the day appears here.</div>`;
-  for (const d of g.days) renderDay(list, d);
+  const boxes = {};
+  for (const d of g.days) {
+    const e = d.event && (S.events || []).find(x => x.name === d.event);
+    if (!e) { renderDay(list, d); continue; }
+    let box = boxes[e.name];
+    if (!box) {                                       // one box per multi-day event, its days in date order
+      const ds = S.days.filter(x => x.event === e.name), n = ds.reduce((a, x) => a + (x.races || 0), 0);
+      const dd = ds.map(x => x.date).sort(), f = x => new Date(x + "T12:00:00");
+      const span = dd.length > 1 ? `${f(dd[0]).toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${f(dd[dd.length - 1]).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+        : f(dd[0]).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+      box = boxes[e.name] = document.createElement("div"); box.className = "eventbox";
+      box.innerHTML = `<div class="evhead"><b>${esc(e.name)}</b><span>${span} · ${ds.length} day${ds.length === 1 ? "" : "s"} · ${n} race${n === 1 ? "" : "s"}${e.where ? " · " + esc(e.where) : ""}</span></div><div class="days"></div>`;
+      list.appendChild(box);
+    }
+    renderDay(box.querySelector(".days"), d, e, true);
+  }
 }
-function renderDay(list, d) {
+function renderDay(list, d, ev, first) {
   const dt = new Date(d.date + "T12:00:00");
   const el = document.createElement(d.href ? "a" : "div");
   el.className = "day" + (d.href ? "" : " none");
@@ -192,7 +211,7 @@ function renderDay(list, d) {
   if (d.estimated) tags.push(`<span class="tag">Starts estimated</span>`);
   el.innerHTML = `
     ${d.label
-      ? `<div class="date named"><span class="dm">${esc(d.label)}</span><span class="yr">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span></div>`
+      ? `<div class="date named"><span class="dm">${esc(ev && d.label.startsWith(ev.name + " · ") ? d.label.slice(ev.name.length + 3) : d.label)}</span><span class="yr">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span></div>`
       : `<div class="date"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="dm">${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span><span class="yr">${dt.getFullYear()}</span></div>`}
     <div class="info">
       <div class="facts">${d.races ? `<span><b>${d.races}</b> race${d.races === 1 ? "" : "s"}</span>` : "<span>No races found</span>"}${wind ? `<span>${wind}</span>` : ""}${d.tide ? `<span>${esc(d.tide[0].toUpperCase() + d.tide.slice(1))} tide</span>` : ""}<span>${d.boats.length} boat${d.boats.length === 1 ? "" : "s"}</span></div>
@@ -200,7 +219,7 @@ function renderDay(list, d) {
       ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
     </div>
     ${d.href ? `<span class="go">Replay →</span>` : ""}`;
-  list.appendChild(el);
+  if (first) list.prepend(el); else list.appendChild(el);
 }
 if (S.upload_url) $("upload").href = S.upload_url;
 else { $("upload").hidden = true; $("acct").textContent = "Uploads open once this site is on GitHub."; }
