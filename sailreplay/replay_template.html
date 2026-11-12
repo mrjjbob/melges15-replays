@@ -1091,7 +1091,7 @@ function advPrep(k) {
   const bs = R_.boats.map(b => {
     const t = b.track, lat = num(t.lat), lon = num(t.lon), n = lat.length, x = new Float64Array(n), y = new Float64Array(n);
     for (let i = 0; i < n; i++) { x[i] = (lon[i] - lo0) * mlon; y[i] = (lat[i] - la0) * 111320; }
-    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), cog: num(t.cog), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
+    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), cog: num(t.cog), hdg: num(t.hdg), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
   });
   return (cache[k] = { k, R: R_, M: M_, hz, twdAt, xy, boats: bs, gunI: M_.gun_s != null ? Math.round(M_.gun_s * M_.hz) : null, nb: bs.length });
 }
@@ -1170,6 +1170,83 @@ function advLegend(byPlace) {
   if (byPlace) return `<span><i style="background:${placeColour(1, 5)}"></i>Won the race</span><span><i style="background:${placeColour(3, 5)}"></i>Middle</span><span><i style="background:${placeColour(5, 5)}"></i>Last</span>`;
   return advBoats().filter(b => !ADV.off.has(b.name)).map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("");
 }
+// ---------- rate of turn through tacks and gybes, from the compass heading
+const BOAT_LEN_M = 4.57;                 // Melges 15 hull length
+const ROT_MIN_KT = 1.5;                  // turn per boat length is left out below this speed
+function turnTrace(P, B, i0) {
+  // heading unwrapped from 8 s before to 12 s after; rate over 1 s (centred); sign so the turn is positive
+  const a = i0 - 8 * P.hz, b = i0 + 12 * P.hz;
+  if (a < 1 || b >= B.n - 1) return null;
+  const h = [], dt = 1 / P.hz; let prev = null, off = 0;
+  for (let i = a - 1; i <= b + 1; i++) { let v = B.hdg[i]; if (!isFinite(v)) { h.push(NaN); continue; }
+    if (prev != null) { let d = v + off - prev; while (d > 180) { off -= 360; d -= 360; } while (d < -180) { off += 360; d += 360; } } prev = v + off; h.push(v + off); }
+  const k = (i) => i - (a - 1);
+  const hd = (i) => h[k(i)];
+  const tot = hd(i0 + 5 * P.hz) - hd(i0 - 5 * P.hz);
+  if (!isFinite(tot) || Math.abs(tot) < 40) return null;     // not a real turn in the compass
+  const sg = Math.sign(tot), rot = [], rud = [], T = [];
+  for (let i = a; i <= b; i++) {
+    const r = sg * (hd(i + 1) - hd(i - 1)) / (2 * dt);
+    const v = B.sog[i] * 0.5144;
+    T.push((i - i0) / P.hz); rot.push(r);
+    rud.push(isFinite(v) && B.sog[i] >= ROT_MIN_KT ? r / (v / BOAT_LEN_M) : NaN);
+  }
+  // fastest rate held over 1 s, and the time from 10% to 90% of the way round
+  let peak = -Infinity; for (let j = 1; j < rot.length; j++) { const m = (rot[j] + rot[j - 1]) / 2; if (isFinite(m) && m > peak) peak = m; }
+  const h0 = hd(i0 - 5 * P.hz), f = q => { for (let i = i0 - 5 * P.hz; i <= i0 + 5 * P.hz; i++) if (sg * (hd(i) - h0) >= q * Math.abs(tot)) return (i - i0) / P.hz; return NaN; };
+  let rmax = -Infinity; rud.forEach(v => { if (isFinite(v) && v > rmax) rmax = v; });
+  return { T, rot, rud, peak, ttt: f(0.9) - f(0.1), turn: Math.abs(tot), rmax };
+}
+function drawTurns(kind) {
+  if (!$("advRot")) return;
+  const byPlace = ADV.colour === "place";
+  const ev = advEvents(kind).map(e => ({ ...e, tr: turnTrace(e.P, e.B, e.i0) })).filter(e => e.tr);
+  // per boat average on the common time grid
+  const acc = new Map();
+  for (const e of ev) {
+    let a = acc.get(e.B.name); if (!a) acc.set(e.B.name, a = { name: e.B.name, color: e.B.color, n: 0, T: e.tr.T, rs: e.tr.T.map(() => 0), rc: e.tr.T.map(() => 0), us: e.tr.T.map(() => 0), uc: e.tr.T.map(() => 0), list: [] });
+    a.n++; a.list.push(e);
+    e.tr.rot.forEach((v, j) => { if (isFinite(v)) { a.rs[j] += v; a.rc[j]++; } });
+    e.tr.rud.forEach((v, j) => { if (isFinite(v)) { a.us[j] += v; a.uc[j]++; } });
+  }
+  const ser = [...acc.values()].map(a => ({ name: a.name, color: a.color, n: a.n, list: a.list,
+    rot: a.rs.map((v, j) => a.rc[j] >= Math.max(1, a.n * 0.5) ? v / a.rc[j] : NaN), rud: a.us.map((v, j) => a.uc[j] >= Math.max(1, a.n * 0.5) ? v / a.uc[j] : NaN) }));
+  const T = ser.length ? [...acc.values()][0].T : [0];
+  const w0 = kind === "tack" ? "head to wind" : "dead downwind";
+  advLines("advRot", T, ser, "rot", "turn °/s", w0);
+  advLines("advRud", T, ser, "rud", "° per boat length", w0);
+  // scatter: peak rate of turn against the metres the turn cost
+  const [cv, c, w, h] = chartCanvas("advRotCost");
+  const pts = ev.filter(e => isFinite(e.tr.peak) && e.m.loss_m != null && isFinite(e.m.loss_m));
+  if (!pts.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(`No ${kind}s with both numbers in the races picked.`, 50, 40); }
+  else {
+    const xs = pts.map(e => e.tr.peak), ys = pts.map(e => e.m.loss_m);
+    const x0 = Math.floor(Math.min(...xs) / 5) * 5 - 2, x1 = Math.ceil(Math.max(...xs) / 5) * 5 + 2;
+    const y0 = Math.min(0, Math.min(...ys)) - 2, y1 = Math.max(...ys) + 2;
+    const [X, Y] = axes(c, w, h, x0, x1, y0, y1, "fastest rate of turn °/s", "metres lost");
+    for (const e of pts) { c.fillStyle = byPlace ? placeColour(e.B.pos, e.P.nb) : e.B.color; c.globalAlpha = 0.8; c.beginPath(); c.arc(X(e.tr.peak), Y(e.m.loss_m), 4, 0, 7); c.fill(); }
+    c.globalAlpha = 1;
+    // least-squares line through all of them, with how strongly the two go together
+    if (pts.length >= 6) {
+      const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+      let sxy = 0, sxx = 0, syy = 0; xs.forEach((x, j) => { sxy += (x - mx) * (ys[j] - my); sxx += (x - mx) ** 2; syy += (ys[j] - my) ** 2; });
+      const k = sxy / sxx, r = sxy / Math.sqrt(sxx * syy);
+      c.strokeStyle = GOLD; c.globalAlpha = 0.6; c.lineWidth = 2; c.setLineDash([6, 5]); c.beginPath(); c.moveTo(X(x0), Y(my + k * (x0 - mx))); c.lineTo(X(x1), Y(my + k * (x1 - mx))); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+      const verdict = Math.abs(r) < 0.2 ? "no real link" : (k < 0 ? "faster turns cost less" : "faster turns cost more") + (Math.abs(r) < 0.4 ? " (weak)" : "");
+      c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";
+      c.fillText(`${pts.length} ${kind}s · ${verdict} · r = ${r.toFixed(2)}`, w - 12, 18); c.textAlign = "left";
+    }
+  }
+  // per-boat medians
+  const med = a => { const v = a.filter(isFinite).sort((p, q) => p - q); return v.length ? v[Math.floor(v.length / 2)] : null; };
+  const f = (v, d, u = "") => v == null ? "—" : v.toFixed(d) + u;
+  let t = `<table><thead><tr><th>Boat</th><th>${kind}s</th><th>Turned through</th><th>Fastest turn</th><th>Time to turn</th><th>Most helm</th><th>Lowest speed</th><th>Metres lost</th></tr></thead><tbody>`;
+  for (const s of ser) {
+    const L = s.list;
+    t += `<tr><td class="nm"><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${s.color};margin-right:8px"></i>${esc(s.name)}</td><td>${L.length}</td><td>${f(med(L.map(e => e.tr.turn)), 0, "°")}</td><td>${f(med(L.map(e => e.tr.peak)), 0, " °/s")}</td><td>${f(med(L.map(e => e.tr.ttt)), 1, " s")}</td><td>${f(med(L.map(e => e.tr.rmax)), 0, "°/length")}</td><td>${f(med(L.map(e => e.m.min_sog ?? NaN)), 1, " kt")}</td><td>${f(med(L.map(e => e.m.loss_m ?? NaN)), 1, " m")}</td></tr>`;
+  }
+  $("advRotTbl").innerHTML = ser.length ? t + "</tbody></table>" : `<p class="note">No ${kind}s in the races picked.</p>`;
+}
 function advEvents(kind) {
   const ev = [];
   advEach((P, B) => { for (const m of B.b.manoeuvres) if (m.kind === kind) ev.push({ P, B, i0: Math.round(m.t * P.hz), m }); });
@@ -1235,6 +1312,13 @@ function renderAdvanced() {
   h += `<div><h2>Gybe windows</h2><p class="note">Every gybe averaged per boat, from 10 s before dead downwind (0) to 30 s after.</p><div class="charts">
     ${card("advGybeVmg", "VMG", "Knots away from the wind.")}${card("advGybeSog", "Speed", "Knots over the ground.")}
     ${card("advGybeTwa", "Wind angle", "Degrees off the wind, either gybe.")}${card("advGybeHeel", "Heel", "Degrees to leeward.")}</div></div>`;
+  const turnK = ADV.turn === "gybe" ? "gybe" : "tack", turnW = turnK === "tack" ? "head to wind" : "dead downwind";
+  const turnChip = `<div class="ovtools r">${chip("data-turn", "tack", turnK === "tack", "Tacks")}${chip("data-turn", "gybe", turnK === "gybe", "Gybes")}</div>`;
+  h += `<div><h2>Rate of turn</h2><p class="note">How fast each boat turns through a ${turnK} and how hard it steers to do it, from the Atlas compass (2 readings a second, so a turn of a few seconds is only a handful of points: read the shape, not the last decimal). There is no rudder sensor, so rudder is shown by what it does: how many degrees the boat turns for each boat length it sails. The same rudder angle turns a boat about the same amount per length whatever its speed, so a higher number means more helm.</p><div class="charts">
+    ${card("advRot", "Rate of turn", `Degrees a second, averaged per boat, 0 = ${turnW}. A tall, narrow peak is a quick turn; a low, wide hump a slow, round one. Positive is the way the boat is turning.`, false, false, true, turnChip)}
+    ${card("advRud", "Helm: turn per boat length", `Degrees of turn for each boat length (4.6 m) sailed, the stand-in for rudder angle. Left out below 1.5 kt, where it means little. A spike late in the turn is the helm pushing the bow round once the boat has slowed.`)}
+    ${card("advRotCost", `Does turning faster pay? Every ${turnK}`, `Each dot is one ${turnK}: its fastest rate of turn (over 1 s) against the metres it cost compared with sailing on at the speed it had going in (negative means it gained). Look for whether quick turns sit lower.`, true, false, true)}
+    <div class="chartcard wide"><h3>${turnK === "tack" ? "Tack" : "Gybe"} turning numbers</h3><p class="note">Medians per boat. Time to turn is from 10% to 90% of the way round.</p><div class="tbl" id="advRotTbl"></div></div></div></div>`;
   const lineUp = ADV.startOrient === "line";
   h += `<div><h2>Starts</h2><div class="charts">${card("advStarts", "Every start", `Every race's start played together, from a minute before the gun to 30 s after, centred on the middle of each start line (dashed, one per race). ${lineUp ? "Turned so every line runs straight across with the course up, to compare where on the line boats started." : "Turned so each race's wind at the gun is up, so a line that favoured one end shows tilted."} Each boat shows its last 20 s; the faint lines are the whole minute and a half. Colour by finish place to see whether the winners started in one spot.`, true, true, "place",
     `<div class="ovtools r">${chip("data-sorient", "wind", !lineUp, "Wind up")}${chip("data-sorient", "line", lineUp, "Level line")}<button class="chip" id="advStartPlay" aria-pressed="${ADV.playing}">${ADV.playing ? "Pause" : "Play"}</button></div>`,
@@ -1262,6 +1346,7 @@ function renderAdvanced() {
   el.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => { ADV.mark = b.dataset.mark; renderAdvanced(); });
   el.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => { ADV.pin = b.dataset.pin; renderAdvanced(); });
   el.querySelectorAll("[data-gate]").forEach(b => b.onclick = () => { ADV.gate = b.dataset.gate; renderAdvanced(); });
+  el.querySelectorAll("[data-turn]").forEach(b => b.onclick = () => { ADV.turn = b.dataset.turn; renderAdvanced(); });
   el.querySelectorAll("[data-sorient]").forEach(b => b.onclick = () => { ADV.startOrient = b.dataset.sorient; renderAdvanced(); });
   $("advStartPlay").onclick = () => { ADV.playing = !ADV.playing; if (ADV.playing && (ADV.startT >= 30 || !ADV.played)) ADV.startT = -60; ADV.played = true; advStartUi(); if (ADV.playing) advStartLoop(); };
   $("advStartT").oninput = e => { ADV.startT = +e.target.value; ADV.playing = false; ADV.played = true; advStartUi(); drawStarts(); };
@@ -1276,6 +1361,8 @@ function drawAdvanced() {
   advLines("advTackTwa", tk.T, tk.series, "twa", "TWA °", "head to wind"); advLines("advTackHeel", tk.T, tk.series, "heel", "heel °", "head to wind");
   advLines("advGybeVmg", gy.T, gy.series, "vmg", "VMG kt", "dead downwind"); advLines("advGybeSog", gy.T, gy.series, "sog", "speed kt", "dead downwind");
   advLines("advGybeTwa", gy.T, gy.series, "twa", "TWA °", "dead downwind"); advLines("advGybeHeel", gy.T, gy.series, "heel", "heel °", "dead downwind");
+
+  drawTurns(ADV.turn === "gybe" ? "gybe" : "tack");
 
   // starts (played back by drawStarts)
   const sp = [], lines = [];
