@@ -323,14 +323,22 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
         if e1 > e0:
             b = e0 + int(np.nanargmax(p[e0:e1]) if c[-1][0] == 1 else np.nanargmin(p[e0:e1]))
         marks = [{"kind": "start", "lat": float(s.lat[st]), "lon": float(s.lon[st]), "t": int(grid[st])}]
-        for L in c:
+        offsets, reach_m = [], []
+        for li, L in enumerate(c):
             seg = p[L[1]:L[2]]
             if not len(seg):
                 continue
             j = L[1] + int(np.argmax(seg) if L[0] == 1 else np.argmin(seg))
+            if L is not c[-1] and L[0] == 1:
+                o = _offset_after(s, j, hz, wrap180(twd - cs))
+                if o is not None:
+                    reach_m.append(o["d"])
+                    if o["ok"]:
+                        offsets.append({"kind": "offset", "lat": o["lat"], "lon": o["lon"], "t": int(grid[o["k"]]),
+                                        "leg": li, "d": o["d"]})
             if L is not c[-1]:
                 mk = {"kind": "windward" if L[0] == 1 else "leeward",
-                      "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j])}
+                      "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j]), "leg": li}
                 if L[0] == -1:
                     mk["rounded"] = _rounding_side(s.cog, j, hz)
                 # the boat passes beside the mark, not over it: put the mark a few metres inside
@@ -347,8 +355,40 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
         out.append({"start_ms": int(grid[st]), "finish_ms": int(grid[fb]),
                     "legs": ["up" if L[0] == 1 else "down" for L in c], "course": course,
                     "_legs": [(L[0], int(grid[L[1]]), int(grid[min(n - 1, L[2])]), round(math.hypot(*net(L)))) for L in c],
-                    "marks": marks, "twd": float(circ_mean(twd[a:b]))})
+                    "marks": marks, "offsets": offsets, "reach_m": reach_m, "twd": float(circ_mean(twd[a:b]))})
     return out
+
+
+def _offset_after(s, j, hz, twa):
+    """The windward offset: a second, smaller mark a short reach past the windward mark. After
+    rounding, the boat reaches (wind abeam) for a few seconds, then bears away onto the run.
+    Returns the spot where the boat settled on the run ({lat, lon, k, d: metres from the windward mark,
+    ok: it looks like an offset}), or None when it can't be read."""
+    n = len(s.lat)
+    at = np.abs(_nan_movmedian(twa, max(1, int(3 * hz))))
+    end = min(n - 1, j + int(75 * hz))
+    k1 = next((i for i in range(j, end) if np.isfinite(at[i]) and at[i] > 60), None)       # round the windward mark
+    if k1 is None:
+        return None
+    hold = int(6 * hz)
+    k2 = next((i for i in range(k1, end - hold) if np.all(at[i:i + hold] >= 125)), None)   # settled on the run
+    if k2 is None:
+        return None
+    reach = at[k1:k2]
+    secs = (k2 - k1) / hz
+    d = math.hypot((s.lon[k2] - s.lon[j]) * 111_320 * math.cos(math.radians(s.lat[j])), (s.lat[k2] - s.lat[j]) * 111_320)
+    ok = (3 <= secs <= 45 and len(reach) > 0 and 60 <= float(np.nanmedian(reach)) <= 115 and 12 <= d <= 180)
+    lat, lon = float(s.lat[k2]), float(s.lon[k2])
+    cs = s.cog[k2]
+    if np.isfinite(cs):                                   # left to port, like the windward mark
+        lat, lon = _offset(lat, lon, float(cs) - 90.0, MARK_INSIDE_M)
+    return {"lat": lat, "lon": lon, "k": k2, "d": float(d), "ok": bool(ok)}
+
+
+# A day has windward offsets when the boats typically reach this far from the windward mark before
+# bearing away. Without one they bear away within a few boat lengths (CYC frostbites: about 12 m);
+# with one, 30 m and more (Southampton, Down Bay)
+OFFSET_DAY_MEDIAN_M = 22.0
 
 
 MARK_INSIDE_M = 7.0
@@ -475,7 +515,11 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
     is used instead."""
     for r in timer:
         g = r["start_ms"]
-        c = min((c for c in course if g - 150_000 <= c["start_ms"] <= g + 240_000),
+        # the course found from the sailing that set off with this gun; a boat already beating up to
+        # the line before the gun can make it look minutes early, so a course still under way at
+        # the gun (and finishing well after it) counts too
+        c = min((c for c in course if g - 150_000 <= c["start_ms"] <= g + 240_000
+                 or (c["start_ms"] <= g and max(c["finish"].values(), default=0) >= g + 300_000)),
                 key=lambda c: abs(c["start_ms"] - g), default=None)
         if c is None:
             continue
@@ -485,7 +529,7 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
             if k in c:
                 r[k] = c[k]
         # the course marks; an estimated start/finish line only when nobody pinged the real one
-        r["marks"] = [m for m in c.get("marks", []) if pinged is False or m["kind"] in ("windward", "leeward")]
+        r["marks"] = [m for m in c.get("marks", []) if pinged is False or m["kind"] in ("windward", "leeward", "offset")]
         if not pinged:
             for k in ("line_est", "line_basis"):
                 if k in c:
@@ -596,6 +640,30 @@ def _made_ground_upwind(boats, t0, t1, twd) -> float:
     return best
 
 
+def _fill_offsets(races):
+    """On a course with an offset every windward rounding has one, but a boat can bear away early or
+    a log can miss it. Put the missing ones where the others sit from their windward mark (the
+    race's own when it has any, otherwise the day's)."""
+    def vec(r):
+        out = []
+        ww = {m["leg"]: m for m in r["marks"] if m["kind"] == "windward" and m.get("leg") is not None}
+        for o in (m for m in r["marks"] if m["kind"] == "offset"):
+            w = ww.get(o.get("leg"))
+            if w:
+                out.append((o["lat"] - w["lat"], o["lon"] - w["lon"]))
+        return out
+    day = [v for r in races for v in vec(r)]
+    for r in races:
+        v = vec(r) or day
+        if not v:
+            continue
+        dlat, dlon = float(np.median([a for a, _ in v])), float(np.median([b for _, b in v]))
+        have = {m.get("leg") for m in r["marks"] if m["kind"] == "offset"}
+        for w in [m for m in r["marks"] if m["kind"] == "windward" and m.get("leg") not in have]:
+            r["marks"].append({"kind": "offset", "lat": w["lat"] + dlat, "lon": w["lon"] + dlon, "boats": 0,
+                               "t": w.get("t", 0), "leg": w.get("leg"), "estimated": True})
+
+
 def _course_races(boats, guns=None) -> list[dict]:
     races = []
     found = []                                       # (start, name, chain)
@@ -603,6 +671,8 @@ def _course_races(boats, guns=None) -> list[dict]:
         for c in _course_chains(log, guns=guns):
             found.append((c["start_ms"], name, c))
     found.sort(key=lambda f: f[0])
+    reach = [d for _, _, c in found for d in c.get("reach_m", [])]
+    day_has_offsets = len(reach) >= 3 and float(np.median(reach)) >= OFFSET_DAY_MEDIAN_M
     for st, name, c in found:
         hit = next((r for r in races if abs(r["_starts"][0] - st) < 240_000), None)
         if hit is None:
@@ -630,7 +700,7 @@ def _course_races(boats, guns=None) -> list[dict]:
             pts = [c["marks"][k] for c in chains if len(c["marks"]) > k and c["marks"][k]["kind"] == m["kind"]]
             mk = {"kind": m["kind"], "lat": float(np.mean([q["lat"] for q in pts])),
                   "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts),
-                  "t": int(max(q["t"] for q in pts))}
+                  "t": int(max(q["t"] for q in pts)), "leg": m.get("leg")}
             # Leeward gate: anyone rounding to starboard means two marks. Place each by the
             # boats that rounded it; the leeward mark itself stays at the middle of the gate.
             if m["kind"] == "leeward" and any(q.get("rounded") == "starboard" for q in pts):
@@ -642,6 +712,16 @@ def _course_races(boats, guns=None) -> list[dict]:
                                            "lon": float(np.mean([q["lon"] for q in g])), "boats": len(g)})
                 r["gate"] = True
             marks.append(mk)
+        # windward offsets, matched by the beat they follow (not every boat's log shows every one);
+        # kept only when the day's sailing says there is an offset and at least half the boats show it
+        legs_up = sorted({o["leg"] for c in chains for o in c.get("offsets", [])}) if day_has_offsets else []
+        for leg in legs_up:
+            pts = [o for c in chains for o in c.get("offsets", []) if o["leg"] == leg]
+            if len(pts) * 2 < len(chains):
+                continue
+            marks.append({"kind": "offset", "lat": float(np.mean([q["lat"] for q in pts])),
+                          "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts),
+                          "t": int(max(q["t"] for q in pts)), "leg": leg})
         r["marks"] = marks
         if r["marks"]:
             r["_fin0"] = dict(r["finish"])
@@ -652,6 +732,8 @@ def _course_races(boats, guns=None) -> list[dict]:
             for n, t in list(r["finish"].items()):
                 if t < last + 20_000 and r["_fin0"].get(n, 0) > t:
                     r["finish"][n] = r["_fin0"][n]
+    if day_has_offsets:
+        _fill_offsets(races)
     races.sort(key=lambda r: r["start_ms"])
     _share_committee(races, boats)
     for r in races:
@@ -897,7 +979,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
                race_index: int = 0, hz: float = 2.0, pre_start_s: float = 180.0,
                heel_offsets: dict | None = None, title: str | None = None,
                colors: dict | None = None, race: dict | None = None,
-               not_before_ms: int | None = None) -> dict:
+               not_before_ms: int | None = None, area: dict | None = None) -> dict:
     heel_offsets = heel_offsets or {}
     colors = colors or {}
     logs = [l for _, l in boats]
@@ -931,6 +1013,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     elif gun_ms is not None:
         t0 = max(data_start, gun_ms - int(pre_start_s * 1000))
         nxt = [g for g in guns if g > gun_ms + 60_000]
+        if race is not None and race.get("next_start_ms"):
+            nxt = sorted(nxt + [race["next_start_ms"]])
         cap = (nxt[0] - int(pre_start_s * 1000)) if nxt else data_end
         ends = []
         for s in series:
@@ -940,6 +1024,11 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     else:
         notes.append("No race start found on the timers, so the whole session is shown and start analysis is skipped.")
         t0, t1 = data_start, data_end
+    if area and gun_ms is not None:
+        out = _left_area(series, area, gun_ms, t1)
+        if out is not None and out < t1:
+            t1 = out
+            notes.append("The replay ends once the boats left the racing area (sailing in).")
 
     step = int(round(1000 / hz))
     grid = np.arange(t0, t1 + 1, step, dtype=np.int64)
@@ -980,7 +1069,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
         ref = ((line["pin_xy"][0] + line["boat_xy"][0]) / 2, (line["pin_xy"][1] + line["boat_xy"][1]) / 2)
     marks_xy = []
     for m in (race or {}).get("marks", []):
-        if m["kind"] in ("windward", "leeward", "wing"):
+        if m["kind"] in ("windward", "leeward", "wing", "offset"):
             for g in (m.get("gate") or [m]):
                 marks_xy.append(((g["lon"] - lon0) * mlon, (g["lat"] - lat0) * mlat))
     out_boats = []
@@ -1913,6 +2002,148 @@ def write_race_csvs(race: dict, out_dir) -> list:
 
 
 # --------------------------------------------------------------------------- whole day
+AREA_MARGIN_M = 400.0       # how far past the furthest mark still counts as the racing area
+
+
+def _busy_area(races, boats) -> dict | None:
+    """No marks found (practice laps round a short course): the racing area is where the boats
+    spent the time between the first gun and the last race's start, out to most of their sailing."""
+    t0, t1 = races[0]["start_ms"], races[-1]["start_ms"] + 5 * 60_000
+    pts = [(q["lat"], q["lon"]) for _, log in boats for q in log.track[::4] if t0 <= q["t"] <= t1]
+    if len(pts) < 20:
+        return None
+    lat0, lon0 = float(np.median([p[0] for p in pts])), float(np.median([p[1] for p in pts]))
+    mlon = 111_320.0 * math.cos(math.radians(lat0))
+    d = [math.hypot((p[1] - lon0) * mlon, (p[0] - lat0) * 111_320.0) for p in pts]
+    p90 = float(np.percentile(d, 90))
+    return {"lat": lat0, "lon": lon0, "r_m": p90 + max(120.0, p90)}
+
+
+def racing_area(races: list[dict], boats=None) -> dict | None:
+    """The day's racing area: a circle round every mark and start line found, reaching AREA_MARGIN_M
+    past the furthest one. A boat that leaves it and doesn't come back is sailing in (or out)."""
+    pts = [(m["lat"], m["lon"]) for r in races for m in r.get("marks", []) if m.get("lat") is not None]
+    for r in races:
+        le = r.get("line_est") or {}
+        for k in ("pin", "boat"):
+            if isinstance(le.get(k), (list, tuple)) and len(le[k]) == 2:
+                pts.append((le[k][0], le[k][1]))
+    if len(pts) < 2:
+        return _busy_area(races, boats) if boats else None
+    lat0 = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2
+    lon0 = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
+    mlon = 111_320.0 * math.cos(math.radians(lat0))
+    far = max(math.hypot((p[1] - lon0) * mlon, (p[0] - lat0) * 111_320.0) for p in pts)
+    return {"lat": lat0, "lon": lon0, "r_m": far + AREA_MARGIN_M}
+
+
+def _left_area(series, area, gun_ms, t1) -> int | None:
+    """When the last boat left the racing area for good after the gun (plus 30 s), or None if one
+    was still in it at t1."""
+    mlon = 111_320.0 * math.cos(math.radians(area["lat"]))
+    last = None
+    for s in series:
+        rows = [r for r in s.log.track if gun_ms <= r["t"] <= t1]
+        if not rows:
+            continue
+        t = np.array([r["t"] for r in rows], dtype=np.int64)
+        d = np.hypot((np.array([r["lon"] for r in rows]) - area["lon"]) * mlon,
+                     (np.array([r["lat"] for r in rows]) - area["lat"]) * 111_320.0)
+        inside = np.nonzero(d <= area["r_m"])[0]
+        if not len(inside):
+            continue                                  # never in it: not this boat's race
+        k = inside[-1]
+        if k == len(d) - 1:
+            return None                               # still racing at the end of the window
+        out = int(t[k + 1]) + 30_000
+        last = out if last is None else max(last, out)
+    return last
+
+
+def _exit_time(log, area, t_from, t_to) -> int | None:
+    """When a boat left the racing area for good between t_from and t_to (None if it stayed in)."""
+    mlon = 111_320.0 * math.cos(math.radians(area["lat"]))
+    rows = [r for r in log.track if t_from <= r["t"] <= t_to]
+    if not rows:
+        return None
+    inside = [k for k, r in enumerate(rows)
+              if math.hypot((r["lon"] - area["lon"]) * mlon, (r["lat"] - area["lat"]) * 111_320.0) <= area["r_m"]]
+    if not inside or inside[-1] == len(rows) - 1:
+        return None
+    return int(rows[inside[-1] + 1]["t"])
+
+
+def _drop_sail_in_beat(r, logs, area):
+    """A last "beat" that is really the sail home: the boats reach off without a single tack and
+    leave the racing area. The race then ended at the last leeward mark (a downwind finish)."""
+    legs, twd = r.get("legs") or [], r.get("twd")
+    lws = [m for m in r.get("marks", []) if m["kind"] == "leeward"]
+    if len(legs) < 3 or legs[-1] != "up" or twd is None or not lws:
+        return
+    last_lw = max(lws, key=lambda m: m.get("t", 0))
+    t0 = last_lw.get("t", 0)
+    home = 0
+    for name in r.get("finish") or {}:
+        log = logs.get(name)
+        if log is None:
+            continue
+        out = _exit_time(log, area, t0, t0 + 20 * 60_000)
+        if out is None:
+            return                                    # someone stayed out there: a real beat
+        twa = [wrap180(q["cog"] - twd) for q in log.track if t0 + 20_000 <= q["t"] <= out and q["sog_kt"] > 2]
+        up = [a for a in twa if abs(a) < 75]
+        if len(up) >= 2 and min(up) < 0 < max(up):
+            return                                    # tacked: a real beat
+        home += 1
+    if not home:
+        return
+    r["legs"] = legs[:-1]
+    r["marks"] = [m for m in r["marks"] if m is not last_lw]
+    for name, f in list(r["finish"].items()):
+        if f > t0:
+            r["finish"][name] = int(t0)
+    seq = tuple(1 if x == "up" else -1 for x in r["legs"])
+    r["course_letter"] = _course_letter([(x,) for x in seq], None, None, None)[0] or r.get("course_letter", "")
+    r["sail_in_trimmed"] = True
+
+
+def _trim_sail_in(races, boats, area):
+    """A finish found after the boat had left the racing area is the sail in, not the finish (the
+    run home looks like one more run). Finish it instead where the last run reached the leeward
+    mark's depth (the finish line sits by the leeward mark on a downwind finish), or where it left
+    the area."""
+    if not area:
+        return
+    logs = dict(boats)
+    for r in races:
+        _drop_sail_in_beat(r, logs, area)
+    for k, r in enumerate(races):
+        nxt = races[k + 1]["start_ms"] if k + 1 < len(races) else None
+        twd = r.get("twd")
+        lw = [m for m in r.get("marks", []) if m["kind"] == "leeward"]
+        last_mark = max((m.get("t", 0) for m in r.get("marks", []) if m["kind"] in ("windward", "offset", "leeward")),
+                        default=r["start_ms"])
+        for name, f in list((r.get("finish") or {}).items()):
+            log = logs.get(name)
+            if log is None or (nxt and f >= nxt):
+                continue
+            out = _exit_time(log, area, max(r["start_ms"], last_mark - 120_000), f)
+            if out is None:
+                continue
+            new = out
+            if lw and twd is not None and r.get("legs") and r["legs"][-1] == "down":
+                ux, uy = math.sin(math.radians(twd)), math.cos(math.radians(twd))
+                mlon = 111_320.0 * math.cos(math.radians(area["lat"]))
+                depth = lambda la, lo: (lo - area["lon"]) * mlon * ux + (la - area["lat"]) * 111_320.0 * uy
+                d_lw = float(np.mean([depth(m["lat"], m["lon"]) for m in lw]))
+                hit = next((q["t"] for q in log.track if last_mark <= q["t"] <= out and depth(q["lat"], q["lon"]) <= d_lw), None)
+                if hit is not None:
+                    new = int(hit)
+            if new < f:
+                r["finish"][name] = new
+                r["sail_in_trimmed"] = True
+
+
 def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw) -> dict:
     """Every race in the logs, each as its own race model, plus a day summary."""
     from datetime import datetime
@@ -1923,8 +2154,13 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
     out, prev_end = [], None
     first = min(l.start_ms for _, l in boats if l.track)
     day_title = title or datetime.fromtimestamp(first / 1000).strftime("%a %d %b %Y")
+    area = racing_area(races, boats)
+    _trim_sail_in(races, boats, area)
+    for r, nx in zip(races, races[1:]):
+        r["next_start_ms"] = nx["start_ms"]
     for k, r in enumerate(races, 1):
-        rr = build_race(boats, race=r, title=f"Race {k}", not_before_ms=(prev_end + 30_000) if prev_end else None, **kw)
+        rr = build_race(boats, race=r, title=f"Race {k}", not_before_ms=(prev_end + 30_000) if prev_end else None,
+                        area=area, **kw)
         rr["meta"]["race_no"] = k
         rr["meta"]["day_title"] = day_title
         out.append(rr)
@@ -1936,7 +2172,8 @@ def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw
         s = win["summary"]
         rows.append({
             "race": k, "start_ms": r["start_ms"], "estimated": r.get("estimated", False),
-            "course_letter": r.get("course_letter", ""), "gate": bool(r.get("gate")),
+            "course_letter": r.get("course_letter", ""), "gate": bool(r.get("gate")), "legs": r.get("legs") or [],
+            "offset": any(m["kind"] == "offset" for m in r.get("marks", [])),
             "elapsed_s": s["elapsed_s"], "winner": win["name"], "boats": len(bs),
             "twd": rr["wind"].get("twd_avg") if rr["wind"].get("twd_avg") is not None else rr["meta"]["twd_global"],
             "course": r.get("course") or {},

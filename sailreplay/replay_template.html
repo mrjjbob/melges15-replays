@@ -42,6 +42,9 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .clock .val { font: 700 40px/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--accent); min-width: 4.2ch; text-align: right; }
 .races { display: flex; gap: 4px; flex-wrap: wrap; }
 .races button { border: 1px solid var(--rule); background: var(--panel-2); color: var(--muted); border-radius: 8px; min-width: 40px; padding: 6px 10px; font: 600 15px/1 var(--f-display); letter-spacing: .04em; cursor: pointer; font-variant-numeric: tabular-nums; }
+.races .dgrp { display: flex; gap: 4px; align-items: center; flex: none; }
+.races .dgrp + .dgrp { margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--rule); }
+.races .dlbl { font: 600 11px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 2px; white-space: nowrap; }
 .races button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #1a1205; }
 .tabs { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 3px; }
 .tabs button { background: none; border: 0; padding: 6px 14px; border-radius: 6px; font: 600 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
@@ -159,6 +162,7 @@ tr.jumprace .flag { color: var(--accent); }
 .advplay .t { font: 500 13px/1 var(--f-data); color: var(--muted); min-width: 120px; text-align: right; }
 .advbar .k { font: 600 12px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); min-width: 64px; }
 .advbar .chip { background: var(--panel-2); }
+.advbar .dk { font: 600 11px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-left: 6px; }
 .advbar .chip i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
 #advRoundTbl td.nm i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
@@ -318,8 +322,18 @@ if (DAY && DAY.home) {
 }
 if (RACES.length > 1) {
   const nav = $("races"); nav.hidden = false;
-  RACES.forEach((r, j) => { const b = document.createElement("button"); b.textContent = "R" + (j + 1); b.title = r.meta.title; b.setAttribute("aria-current", String(j === K));
-    b.onclick = () => { location.hash = "r" + (j + 1) + ($("view-debrief").hidden ? "" : "-debrief"); }; nav.appendChild(b); });
+  // a regatta over several days: the races grouped under each day, numbered through the event
+  let grp = nav;
+  RACES.forEach((r, j) => {
+    if (DAY && DAY.days && (j === 0 || r.meta.day_idx !== RACES[j - 1].meta.day_idx)) {
+      grp = document.createElement("span"); grp.className = "dgrp";
+      const d = DAY.days[r.meta.day_idx] || {}, l = document.createElement("span"); l.className = "dlbl"; l.textContent = d.label || ""; l.title = d.title || "";
+      grp.appendChild(l); nav.appendChild(grp);
+    }
+    const b = document.createElement("button"); b.textContent = "R" + (j + 1); b.title = r.meta.title; b.setAttribute("aria-current", String(j === K));
+    b.onclick = () => { location.hash = "r" + (j + 1) + ($("view-debrief").hidden ? "" : "-debrief"); }; grp.appendChild(b); });
+  // on a phone the picker scrolls sideways: keep this race's button in view
+  const on = nav.querySelector('[aria-current="true"]'); if (on && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, on.offsetLeft - nav.clientWidth / 2);
 }
 
 // ---------- projection
@@ -349,7 +363,7 @@ applyRot(WIND_UP);
 const marks = [];
 if (M.marks && M.marks.length) {
   const seen = {};
-  for (const m of M.marks) { const [x, y] = toXY(m.lat, m.lon); const label = { windward: "Windward mark", leeward: "Leeward mark", start: "Start (est.)", finish: "Finish (est.)" }[m.kind] || m.kind;
+  for (const m of M.marks) { const [x, y] = toXY(m.lat, m.lon); const label = { windward: "Windward mark", offset: "Windward offset", leeward: "Leeward mark", start: "Start (est.)", finish: "Finish (est.)" }[m.kind] || m.kind;
     if (lineEst && (m.kind === "start" || m.kind === "finish")) continue;
     if (m.gate) {   // leeward gate: one buoy per side, found from which way boats rounded
       for (const g of m.gate) { const [gx, gy] = toXY(g.lat, g.lon);
@@ -481,7 +495,8 @@ function draw() {
     lbl(mid(a, r), "START"); lbl(mid(r, f), "FINISH");
     buoy(r, "Committee (est.)", "#e4eef3", true);
   }
-  for (const m of marks) buoy(rot([m.x, m.y]), m.label, /mark/i.test(m.label) ? "#ff9f40" : "#e4eef3", !/mark/i.test(m.label));
+  for (const m of marks) /offset/i.test(m.label) ? buoy(rot([m.x, m.y]), "Offset", "#ff6b5e", false, true)
+    : buoy(rot([m.x, m.y]), m.label, /mark/i.test(m.label) ? "#ff9f40" : "#e4eef3", !/mark/i.test(m.label));
 
   // full tracks faint; a boat that has finished turns grey
   const ii = Math.floor(state.i);
@@ -558,12 +573,15 @@ function hull(X, Y, hdg, color, sel) {
   ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = sel ? 2.5 : 1.2; ctx.strokeStyle = sel ? C.ink : C.water; ctx.stroke();
   ctx.restore();
 }
-function buoy(p, label, color, square) {
+function buoy(p, label, color, square, small) {
   const X = sx(p[0]), Y = sy(p[1]);
   ctx.fillStyle = color; ctx.strokeStyle = C.water; ctx.lineWidth = 2; ctx.beginPath();
-  if (square) ctx.rect(X - 5, Y - 5, 10, 10); else ctx.arc(X, Y, 6, 0, Math.PI * 2);
+  if (square) ctx.rect(X - 5, Y - 5, 10, 10); else ctx.arc(X, Y, small ? 4.5 : 6, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
-  ctx.font = "600 12px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.fillText(label.toUpperCase(), X + 10, Y + 16);
+  ctx.font = "600 " + (small ? 10 : 12) + "px " + cssv("--f-display"); ctx.fillStyle = C.muted;
+  // the offset sits just beside the windward mark: label it above so the two don't overlap
+  if (small) { ctx.textAlign = "right"; ctx.fillText(label.toUpperCase(), X - 8, Y - 6); ctx.textAlign = "left"; }
+  else ctx.fillText(label.toUpperCase(), X + 10, Y + 16);
 }
 function drawWind() {
   const twd = twdAt(state.i), cv = $("windArrow"), c = cv.getContext("2d");
@@ -820,7 +838,7 @@ function show(v) {
   document.querySelector(".top .clock").hidden = adv;
   $("title").textContent = adv && DAY ? "All races" : M.title;
   if (!$("sub").dataset.race) $("sub").dataset.race = $("sub").textContent;
-  $("sub").textContent = adv && DAY ? (M.day_title || DAY.title) + " · " + RACES.length + " races" : $("sub").dataset.race;
+  $("sub").textContent = adv && DAY ? (DAY.days ? DAY.title : M.day_title || DAY.title) + " · " + RACES.length + " races" : $("sub").dataset.race;
   $("tab-replay").setAttribute("aria-selected", String(rep)); $("tab-debrief").setAttribute("aria-selected", String(deb)); $("tab-advanced").setAttribute("aria-selected", String(adv));
   if (deb) { setPlaying(false); renderDebrief(); window.scrollTo(0, 0); }
   else if (adv) { setPlaying(false); renderAdvanced(); window.scrollTo(0, 0); }
@@ -843,15 +861,17 @@ function renderDebrief() {
   const dot = b => `<i style="background:${b.color}"></i>`;
   const notes = (M.notes || []).map(n => `<p class="note">${esc(n)}</p>`).join("");
   let h = "";
-  if (DAY && RACES.length > 1) {
-    const multi = DAY.races.some(r => r.boats > 1);
+  // the day's races (on a regatta page, just the day this race was sailed)
+  const dayRows = DAY ? (DAY.days ? DAY.races.filter(r => r.day === M.day_idx) : DAY.races) : [];
+  if (DAY && dayRows.length > 1) {
+    const multi = dayRows.some(r => r.boats > 1);
     const fmtT = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     const moved = c => { const parts = []; for (const [k, lbl] of [["windward", "W"], ["leeward", "L"]]) { const d = c[k + "_moved_m"]; if (d != null && d >= 30) parts.push(lbl + " " + d + " m"); } return parts.length ? parts.join(", ") : "—"; };
-    h += `<div><h2>${esc(DAY.title)}</h2><p class="note">${DAY.races.length} races found${DAY.races.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. A course in amber had a mark move 30 m or more since the race before (hover for which); a course in pink changed type, like W to W2. Click a race to open it.</p>
+    h += `<div><h2>${esc(DAY.days ? (DAY.days[M.day_idx] || {}).title || DAY.title : DAY.title)}</h2><p class="note">${dayRows.length} races found${dayRows.some(r => r.estimated) ? " from the sailing (no race timer)" : ""}. A course in amber had a mark move 30 m or more since the race before (hover for which); a course in pink changed type, like W to W2. Click a race to open it.</p>
     <div class="tbl"><table><thead><tr><th>Race</th><th>Start</th><th>${multi ? "Winner's time" : "Time"}</th>${multi ? "<th>Winner</th>" : ""}<th>Wind</th><th>Wind speed</th><th>Tide</th><th>Course</th><th>Upwind VMG</th><th>Downwind VMG</th><th>Tacks</th><th>Tack loss</th></tr></thead><tbody>`;
-    const bu = Math.max(...DAY.races.map(r => r.up_vmg ?? -1)), bd = Math.max(...DAY.races.map(r => r.dn_vmg ?? -1));
-    DAY.races.forEach((r, j) => {
-      const c = r.course || {}, prevL = j ? DAY.races[j - 1].course_letter : null;
+    const bu = Math.max(...dayRows.map(r => r.up_vmg ?? -1)), bd = Math.max(...dayRows.map(r => r.dn_vmg ?? -1));
+    dayRows.forEach((r, j) => {
+      const c = r.course || {}, prevL = j ? dayRows[j - 1].course_letter : null;
       const typeChange = j > 0 && r.course_letter && prevL && r.course_letter !== prevL;
       const mv = moved(c), cc = typeChange ? "ctype" : mv !== "—" ? "cmoved" : "";
       const ctitle = [typeChange ? `Course changed from ${prevL} to ${r.course_letter}` : "", mv !== "—" ? "Moved: " + mv : ""].filter(Boolean).join(" · ");
@@ -1177,8 +1197,8 @@ function renderAdvanced() {
   const el = $("advanced");
   const pick = advRaces(), allB = advBoats(), byPlace = ADV.colour === "place";
   const chip = (attr, val, on, label, dot) => `<button class="chip" ${attr}="${esc(val)}" aria-pressed="${on}">${dot ? `<i style="background:${dot}"></i>` : ""}${esc(label)}</button>`;
-  let h = `<div><h2>Advanced</h2><p class="note">Every race of the day laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.</p>
-  <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
+  let h = `<div><h2>Advanced</h2><p class="note">Every race ${DAY && DAY.days ? "of the regatta, all " + DAY.days.length + " days," : "of the day"} laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.</p>
+  <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => (DAY && DAY.days && (k === 0 || r.meta.day_idx !== RACES[k - 1].meta.day_idx) ? `<span class="dk">${esc((DAY.days[r.meta.day_idx] || {}).label || "")}</span>` : "") + chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
   ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
   <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}</div></div>`;
   const card = (id, title, note, wide, tall, legend = true, tools = "", below = "") => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><div class="ovwrap"><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${tools}</div>${below}${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;

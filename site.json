@@ -25,7 +25,9 @@
     "2026-09-05": "Coaching session"
   },
   "events": [
-    {"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton"}
+    {"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton",
+     "slug": "southampton-2026",
+     "course_names": {"up-down-up-down": "L4", "up-down-up": "W3", "up-down-up-down-up": "W5"}}
   ],
   "hidden_days": [
     "2024-09-08",
