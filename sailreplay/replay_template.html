@@ -346,7 +346,7 @@ for (const b of boats) {
 const toXY = (lat, lon) => [(lon - lon0) * mlon, (lat - lat0) * mlat];
 const line = R.line ? { pin: toXY(...R.line.pin), boat: toXY(...R.line.boat), finish: R.line.finish ? toXY(...R.line.finish) : null } : null;
 const LE = M.line_est;
-const lineEst = LE ? { pin: toXY(...LE.pin_end), rc: toXY(...LE.rc), fin: toXY(...LE.finish_end) } : null;
+const lineEst = LE ? { pin: toXY(...LE.pin_end), rc: toXY(...LE.rc), fin: toXY(...LE.finish_end), finFrom: LE.finish_from ? toXY(...LE.finish_from) : null } : null;
 // faint coastline (OpenStreetMap), in the same metres as the tracks
 const COAST = M.coast ? M.coast.lines.map(l => l.map(([la, lo]) => toXY(la, lo))) : [];
 // Map orientation: "wind up" turns the chart so the course runs up the screen, into the wind.
@@ -487,12 +487,13 @@ function draw() {
     buoy(a, "Pin", "#ff9f40"); buoy(b, "Committee", "#e4eef3", true);
   } else if (lineEst) {
     // start and finish off one committee boat, roughly square to the course: pin ... committee boat ... finish mark
-    const a = rot(lineEst.pin), r = rot(lineEst.rc), f = rot(lineEst.fin);
+    // (a downwind finish is its own line near the leeward end: finFrom ... finish end)
+    const a = rot(lineEst.pin), r = rot(lineEst.rc), f = rot(lineEst.fin), f0 = lineEst.finFrom ? rot(lineEst.finFrom) : r;
     ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
     ctx.strokeStyle = "rgba(228,238,243,0.6)"; ctx.beginPath(); ctx.moveTo(sx(a[0]), sy(a[1])); ctx.lineTo(sx(r[0]), sy(r[1])); ctx.stroke();
-    ctx.strokeStyle = "rgba(95,195,122,0.75)"; ctx.beginPath(); ctx.moveTo(sx(r[0]), sy(r[1])); ctx.lineTo(sx(f[0]), sy(f[1])); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(95,195,122,0.75)"; ctx.beginPath(); ctx.moveTo(sx(f0[0]), sy(f0[1])); ctx.lineTo(sx(f[0]), sy(f[1])); ctx.stroke(); ctx.setLineDash([]);
     const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], lbl = (p, t) => { ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "center"; ctx.fillText(t, sx(p[0]), sy(p[1]) - 8); ctx.textAlign = "left"; };
-    lbl(mid(a, r), "START"); lbl(mid(r, f), "FINISH");
+    lbl(mid(a, r), "START"); lbl(mid(f0, f), "FINISH");
     buoy(r, "Committee (est.)", "#e4eef3", true);
   }
   for (const m of marks) /offset/i.test(m.label) ? buoy(rot([m.x, m.y]), "Offset", "#ff6b5e", false, true)
@@ -1074,6 +1075,7 @@ function drawHeelChart() {
 // Settings live on window so they survive switching races (the page is rebuilt for each race).
 const GOLD = "#f5c542";
 const ADV = window.__ADV || (window.__ADV = { after: 30, races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false, startOrient: "wind", pin: "offset", gate: "gate" });
+const WIND_DOTS = false;            // show each race's windward mark on the offset-pinned rounding chart
 const hasKind = kind => advRaces().some(k => (RACES[k].meta.marks || []).some(m => m.kind === kind));
 const hasGate = () => advRaces().some(k => (RACES[k].meta.marks || []).some(m => m.gate));
 let advDone = false;
@@ -1242,7 +1244,7 @@ function renderAdvanced() {
     ${card("advTacks", "Every tack", `From 10 s before head to wind to ${ADV.after || 30} s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one. The gold one made the most distance upwind by the end, in that boat's colour.`, false, true, "place", mirrorChip)}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to ${ADV.after || 30} s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""} The gold one made the most distance downwind by the end.`, false, true, "place", mirrorChip)}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="charts">
-    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", (ADV.mark === "windward" && ADV.pin === "offset" && hasKind("offset") ? "Lined up on the windward offset (red), where the boats bear away, from 45 s before to 30 s after; each race's windward mark shows where it lay from there, so you can see where the boats turned down. " : ADV.mark === "leeward" && ADV.gate !== "merge" && hasGate() ? "A leeward gate shows as its two marks, each rounding on the one it went round, the marks where they lie on average from the middle of the gate. " : "") + "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}${ADV.mark === "windward" && hasKind("offset") ? chip("data-pin", ADV.pin === "offset" ? "mark" : "offset", ADV.pin === "offset", "Pin offset") : ""}${ADV.mark === "leeward" && hasGate() ? chip("data-gate", ADV.gate === "merge" ? "gate" : "merge", ADV.gate === "merge", "Merge gate") : ""}</div>`)}
+    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", (ADV.mark === "windward" && ADV.pin === "offset" && hasKind("offset") ? "Lined up on the windward offset (red), where the boats bear away, from 45 s before to 30 s after, so you can see where the boats turned down. " : ADV.mark === "leeward" && ADV.gate !== "merge" && hasGate() ? "A leeward gate shows as its two marks, each rounding on the one it went round, the marks where they lie on average from the middle of the gate. " : "") + "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}${ADV.mark === "windward" && hasKind("offset") ? chip("data-pin", ADV.pin === "offset" ? "mark" : "offset", ADV.pin === "offset", "Pin offset") : ""}${ADV.mark === "leeward" && hasGate() ? chip("data-gate", ADV.gate === "merge" ? "gate" : "merge", ADV.gate === "merge", "Merge gate") : ""}</div>`)}
     ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Heel</h2><div class="charts">
@@ -1394,7 +1396,7 @@ function drawAdvanced() {
   const pinOff = rd.some(e => e.pinned);
   advOverlay("advRound", rPaths, { all: true,
     empty: "No roundings of that mark found (the mark has to be placed for the race).",
-    extent: centres.flatMap(([x, y]) => [[x - 16, y - 16], [x + 16, y + 16]]).concat(wmarks.map(w => w.xy)),
+    extent: centres.flatMap(([x, y]) => [[x - 16, y - 16], [x + 16, y + 16]]).concat(WIND_DOTS ? wmarks.map(w => w.xy) : []),
     under: (c, sx, sy, sc) => { c.setLineDash([2, 4]); c.strokeStyle = "rgba(134,161,176,.5)"; c.lineWidth = 1;
       for (const [x, y] of centres) { c.beginPath(); c.arc(sx(x), sy(y), 13.7 * sc, 0, 7); c.stroke(); }
       c.setLineDash([]);
@@ -1405,7 +1407,8 @@ function drawAdvanced() {
       if (gateOn) { for (const k in G) { c.textAlign = G[k][0] < 0 ? "right" : "left"; c.fillText((k === "port" ? "PORT ROUNDING" : "STARBOARD ROUNDING"), sx(G[k][0]) + (G[k][0] < 0 ? -10 : 10), sy(G[k][1]) + 16); }
         if (gateAssumed) { c.textAlign = "center"; c.fillText(`GATE ≈ ${GATE_M} M WIDE (ASSUMED)`, sx(0), sy(0) - 22); } }
       if (pinOff) { c.textAlign = "left"; c.fillText("OFFSET", sx(0) + 9, sy(0) + 16);
-        for (const w of wmarks) { c.fillStyle = C.accent; c.globalAlpha = 0.85; c.beginPath(); c.arc(sx(w.xy[0]), sy(w.xy[1]), 3.5, 0, 7); c.fill();
+        // windward mark estimates are hidden here until they are reliable (WIND_DOTS)
+        if (WIND_DOTS) for (const w of wmarks) { c.fillStyle = C.accent; c.globalAlpha = 0.85; c.beginPath(); c.arc(sx(w.xy[0]), sy(w.xy[1]), 3.5, 0, 7); c.fill();
           c.globalAlpha = 1; c.fillStyle = C.muted; c.fillText("W · R" + (w.k + 1), sx(w.xy[0]) + 7, sy(w.xy[1]) - 6); } }
       c.textAlign = "left";
       if (rBest) { c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";

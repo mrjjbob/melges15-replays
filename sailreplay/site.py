@@ -238,7 +238,8 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         if ev:
             entry["event"] = ev["name"]
         try:
-            d = analysis.build_day(boats, title=title, colors=colors, heel_offsets=heel)
+            d = analysis.build_day(boats, title=title, colors=colors, heel_offsets=heel,
+                                   separate_finish=day in (site_cfg.get("separate_finish") or []))
         except ValueError as e:
             entry["note"] = str(e)
             days.append(entry)
