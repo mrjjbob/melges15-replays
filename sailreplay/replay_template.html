@@ -1073,7 +1073,9 @@ function drawHeelChart() {
 // ---------- advanced: every race of the day, for the nerds
 // Settings live on window so they survive switching races (the page is rebuilt for each race).
 const GOLD = "#f5c542";
-const ADV = window.__ADV || (window.__ADV = { after: 30, races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false, startOrient: "wind" });
+const ADV = window.__ADV || (window.__ADV = { after: 30, races: null, off: new Set(), colour: "boat", mirror: false, mark: "windward", startT: 0, playing: false, startOrient: "wind", pin: "offset", gate: "gate" });
+const hasKind = kind => advRaces().some(k => (RACES[k].meta.marks || []).some(m => m.kind === kind));
+const hasGate = () => advRaces().some(k => (RACES[k].meta.marks || []).some(m => m.gate));
 let advDone = false;
 function advPrep(k) {
   const cache = window.__ADVC || (window.__ADVC = []);
@@ -1171,17 +1173,32 @@ function advEvents(kind) {
   advEach((P, B) => { for (const m of B.b.manoeuvres) if (m.kind === kind) ev.push({ P, B, i0: Math.round(m.t * P.hz), m }); });
   return ev;
 }
-function advRoundings(which) {
+function advRoundings(which, pin) {
+  // pin "offset": windward roundings are lined up on the windward offset (where the boats bear away)
+  // in races that have one, so the windward mark shows wherever it lay from there
   const lbl = which === "windward" ? "Windward mark" : "Leeward mark", ev = [];
   advEach((P, B) => {
-    const marks = (P.M.marks || []).filter(m => m.kind === which).flatMap(m => m.gate ? m.gate : [m]).map(m => P.xy(m.lat, m.lon));
+    const all = P.M.marks || [];
+    const offs = which === "windward" && pin === "offset" ? all.filter(m => m.kind === "offset").map(m => P.xy(m.lat, m.lon)) : [];
+    const ww = all.filter(m => m.kind === which && !m.gate).map(m => P.xy(m.lat, m.lon));
+    const gates = all.filter(m => m.kind === which && m.gate).map(m => {
+      const g = m.gate.map(q => ({ side: q.rounded, xy: P.xy(q.lat, q.lon) }));
+      return g.map(q => ({ ...q, mid: [g.reduce((a, c) => a + c.xy[0], 0) / g.length, g.reduce((a, c) => a + c.xy[1], 0) / g.length] }));
+    }).flat();
+    const marks = offs.length ? offs.map(xy => ({ xy, pinned: "offset" })) : ww.map(xy => ({ xy })).concat(gates);
     if (!marks.length) return;
     for (const m of B.b.manoeuvres) {
       if (m.kind !== "rounding" || m.label !== lbl) continue;
       const c0 = Math.round(m.t * P.hz);
       let best = Infinity, bi = null, mk = null;
-      for (let i = Math.max(0, c0 - 60 * P.hz); i < Math.min(B.n, c0 + 30 * P.hz); i++) for (const q of marks) { const d = Math.hypot(B.x[i] - q[0], B.y[i] - q[1]); if (d < best) { best = d; bi = i; mk = q; } }
-      if (bi != null && best < 60) ev.push({ P, B, i0: bi, mark: mk, dist: best });
+      for (let i = Math.max(0, c0 - 60 * P.hz); i < Math.min(B.n, c0 + 30 * P.hz); i++) for (const q of marks) { const d = Math.hypot(B.x[i] - q.xy[0], B.y[i] - q.xy[1]); if (d < best) { best = d; bi = i; mk = q; } }
+      if (bi == null || best >= 60) continue;
+      const e = { P, B, i0: bi, mark: mk.xy, dist: best, side: mk.side || null, mid: mk.mid || null, pinned: mk.pinned || null };
+      if (mk.pinned) {   // the windward mark this offset belongs to: the nearest one upwind of it
+        const near = ww.slice().sort((p, q) => Math.hypot(p[0] - mk.xy[0], p[1] - mk.xy[1]) - Math.hypot(q[0] - mk.xy[0], q[1] - mk.xy[1]))[0];
+        if (near) e.wmark = near;
+      }
+      ev.push(e);
     }
   });
   return ev;
@@ -1217,12 +1234,12 @@ function renderAdvanced() {
     ${card("advTacks", "Every tack", `From 10 s before head to wind to ${ADV.after || 30} s after, head to wind in the middle, wind up.${ADV.mirror ? " Port-to-starboard tacks are mirrored to go the same way." : ""} A wide U is a slow, round tack; a tight V a quick one. The gold one made the most distance upwind by the end, in that boat's colour.`, false, true, "place", mirrorChip)}
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to ${ADV.after || 30} s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""} The gold one made the most distance downwind by the end.`, false, true, "place", mirrorChip)}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="charts">
-    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}</div>`)}
+    ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", (ADV.mark === "windward" && ADV.pin === "offset" && hasKind("offset") ? "Lined up on the windward offset (red), where the boats bear away, from 45 s before to 30 s after; each race's windward mark shows where it lay from there, so you can see where the boats turned down. " : ADV.mark === "leeward" && ADV.gate !== "merge" && hasGate() ? "A leeward gate shows as its two marks, each rounding on the one it went round, the marks where they lie on average from the middle of the gate. " : "") + "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}${ADV.mark === "windward" && hasKind("offset") ? chip("data-pin", ADV.pin === "offset" ? "mark" : "offset", ADV.pin === "offset", "Pin offset") : ""}${ADV.mark === "leeward" && hasGate() ? chip("data-gate", ADV.gate === "merge" ? "gate" : "merge", ADV.gate === "merge", "Merge gate") : ""}</div>`)}
     ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Heel</h2><div class="charts">
     ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, in 1° bands. Heel is smoothed for each race's sea state (longer in a chop, shorter on flat water); VMG over 2 s. The brighter and bigger a point, the more time that boat spent at that heel; faint, small points (hollow under 6 s) are a few seconds and easily a fluke. The gold line is the ideal heel: where VMG peaks with every boat picked pooled together, with bands that have little time pulled towards the average so they can't win on a lucky gust. VMG is often flat over a range of heel: the shaded band is every heel within 1.5% of the best, the line its middle, and the label says how much sailing it rests on.")}
-    ${card("advHeelDn", "Downwind VMG by heel, all races", "The same for steady downwind sailing (wind angle over 110°). Negative is heeled to windward. Clearest on a light day, before the boats are planing. The gold line is the ideal heel for the boats picked.")}</div></div>`;
+    ${card("advHeelDn", "Downwind VMG by heel, all races", "Steady downwind sailing (wind angle over 110°). Negative is heeled to windward. Downwind VMG depends far more on the angle sailed than on heel, and boats heel more when they sail higher, so each reading is VMG against the race's average at that same wind angle (5° bands), added to the race's downwind average. What it can't take out is the breeze: in a puff a boat heels more and goes faster, so a line rising to the right partly just means puffs are fast. There is no wind sensor to separate the two, so treat the gold line as a hint. It needs 20 s of sailing in a band, and there is none when every band is within 2% of the best.")}</div></div>`;
   el.innerHTML = h;
   el.querySelectorAll("[data-all]").forEach(b => b.onclick = () => { ADV.races = null; renderAdvanced(); });
   el.querySelectorAll("[data-race]").forEach(b => b.onclick = () => { const k = +b.dataset.race, s = new Set(advRaces());
@@ -1233,6 +1250,8 @@ function renderAdvanced() {
   el.querySelectorAll("[data-mirror]").forEach(b => b.onclick = () => { ADV.mirror = !ADV.mirror; renderAdvanced(); });
   el.querySelectorAll("[data-after]").forEach(b => b.onclick = () => { ADV.after = { 30: 20, 20: 10, 10: 30 }[ADV.after || 30]; renderAdvanced(); });
   el.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => { ADV.mark = b.dataset.mark; renderAdvanced(); });
+  el.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => { ADV.pin = b.dataset.pin; renderAdvanced(); });
+  el.querySelectorAll("[data-gate]").forEach(b => b.onclick = () => { ADV.gate = b.dataset.gate; renderAdvanced(); });
   el.querySelectorAll("[data-sorient]").forEach(b => b.onclick = () => { ADV.startOrient = b.dataset.sorient; renderAdvanced(); });
   $("advStartPlay").onclick = () => { ADV.playing = !ADV.playing; if (ADV.playing && (ADV.startT >= 30 || !ADV.played)) ADV.startT = -60; ADV.played = true; advStartUi(); if (ADV.playing) advStartLoop(); };
   $("advStartT").oninput = e => { ADV.startT = +e.target.value; ADV.playing = false; ADV.played = true; advStartUi(); drawStarts(); };
@@ -1333,22 +1352,56 @@ function drawAdvanced() {
   }
 
   // roundings
-  const rd = advRoundings(ADV.mark);
-  const rPaths = rd.map(({ P, B, i0, mark }) => {
-    const pts = advPathAround(P, B, i0, -30, 30, mark[0], mark[1], P.twdAt(i0), false, true), end = pts[pts.length - 1];
+  const rd = advRoundings(ADV.mark, ADV.pin);
+  const twdOf = e => e.P.twdAt(e.i0);
+  // A leeward gate is drawn as its two marks: each rounding on the mark it went round, the two marks
+  // where they lie on average from the middle of the gate (wind up). "Merge gate" puts them all on one.
+  // A leeward rounding outside a gate is a port rounding. Looking upwind (wind up) the mark rounded to
+  // port is the right-hand one of the gate. Where no race in the picked ones shows both marks of its
+  // gate, they are drawn GATE_M apart, square to the wind.
+  const GATE_M = 40;
+  const gateOn = ADV.mark === "leeward" && ADV.gate !== "merge" && rd.some(e => e.side);
+  if (gateOn) for (const e of rd) if (!e.side) e.side = "port";
+  const G = {};
+  if (gateOn) for (const e of rd) if (e.mid && Math.hypot(e.mark[0] - e.mid[0], e.mark[1] - e.mid[1]) > 5) {
+    const r = rotTo(e.mark[0] - e.mid[0], e.mark[1] - e.mid[1], twdOf(e)); const g = G[e.side] || (G[e.side] = [0, 0, 0]); g[0] += r[0]; g[1] += r[1]; g[2]++; }
+  for (const k in G) G[k] = [G[k][0] / G[k][2], G[k][1] / G[k][2]];
+  const gateAssumed = gateOn && !(G.port && G.starboard);
+  if (gateAssumed) { G.port = [GATE_M / 2, 0]; G.starboard = [-GATE_M / 2, 0]; }
+  const wmarks = [];                                   // windward marks, from each race's offset
+  const rPaths = rd.map(e => {
+    const { P, B, i0, mark } = e;
+    const pts = advPathAround(P, B, i0, e.pinned ? -45 : -30, 30, mark[0], mark[1], twdOf(e), false, true), end = pts[pts.length - 1];
     // best: furthest towards the next mark 30 s after passing this one (downwind after a windward mark)
     const gain = end && isFinite(end[1]) ? (ADV.mark === "windward" ? -end[1] : end[1]) : null;
+    const sh = gateOn && e.side && G[e.side] ? G[e.side] : null;
+    if (sh) for (const q of pts) { q[0] += sh[0]; q[1] += sh[1]; }
+    if (e.pinned && e.wmark && !wmarks.some(w => w.k === P.k && Math.hypot(w.src[0] - e.wmark[0], w.src[1] - e.wmark[1]) < 1)) {
+      wmarks.push({ k: P.k, src: e.wmark, xy: rotTo(e.wmark[0] - mark[0], e.wmark[1] - mark[1], twdOf(e)) }); }
     return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1 };
   });
   let rBest = null; for (const q of rPaths) if (q.gain != null && (!rBest || q.gain > rBest.gain)) rBest = q;
   if (rBest) { rBest.gold = true; rPaths.splice(rPaths.indexOf(rBest), 1); rPaths.push(rBest); }
+  const centres = gateOn ? Object.values(G) : [[0, 0]];
+  const pinOff = rd.some(e => e.pinned);
   advOverlay("advRound", rPaths, { all: true,
     empty: "No roundings of that mark found (the mark has to be placed for the race).",
-    extent: [[-16, -16], [16, 16]],
-    under: (c, sx, sy, sc) => { c.setLineDash([2, 4]); c.strokeStyle = "rgba(134,161,176,.5)"; c.lineWidth = 1; c.beginPath(); c.arc(sx(0), sy(0), 13.7 * sc, 0, 7); c.stroke(); c.setLineDash([]); },
-    over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 4, 0, 7); c.fill();
+    extent: centres.flatMap(([x, y]) => [[x - 16, y - 16], [x + 16, y + 16]]).concat(wmarks.map(w => w.xy)),
+    under: (c, sx, sy, sc) => { c.setLineDash([2, 4]); c.strokeStyle = "rgba(134,161,176,.5)"; c.lineWidth = 1;
+      for (const [x, y] of centres) { c.beginPath(); c.arc(sx(x), sy(y), 13.7 * sc, 0, 7); c.stroke(); }
+      c.setLineDash([]);
+      if (gateOn && centres.length > 1) { c.strokeStyle = "rgba(242,179,61,.35)"; c.setLineDash([6, 5]); c.beginPath(); c.moveTo(sx(centres[0][0]), sy(centres[0][1])); c.lineTo(sx(centres[1][0]), sy(centres[1][1])); c.stroke(); c.setLineDash([]); } },
+    over: (c, sx, sy) => {
+      for (const [x, y] of centres) { c.fillStyle = pinOff ? "#ff6b5e" : C.accent; c.beginPath(); c.arc(sx(x), sy(y), 4, 0, 7); c.fill(); }
+      c.font = "600 11px " + cssv("--f-display"); c.fillStyle = C.muted;
+      if (gateOn) { for (const k in G) { c.textAlign = G[k][0] < 0 ? "right" : "left"; c.fillText((k === "port" ? "PORT ROUNDING" : "STARBOARD ROUNDING"), sx(G[k][0]) + (G[k][0] < 0 ? -10 : 10), sy(G[k][1]) + 16); }
+        if (gateAssumed) { c.textAlign = "center"; c.fillText(`GATE ≈ ${GATE_M} M WIDE (ASSUMED)`, sx(0), sy(0) - 22); } }
+      if (pinOff) { c.textAlign = "left"; c.fillText("OFFSET", sx(0) + 9, sy(0) + 16);
+        for (const w of wmarks) { c.fillStyle = C.accent; c.globalAlpha = 0.85; c.beginPath(); c.arc(sx(w.xy[0]), sy(w.xy[1]), 3.5, 0, 7); c.fill();
+          c.globalAlpha = 1; c.fillStyle = C.muted; c.fillText("W · R" + (w.k + 1), sx(w.xy[0]) + 7, sy(w.xy[1]) - 6); } }
+      c.textAlign = "left";
       if (rBest) { c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";
-        c.fillText(`best: ${rBest.who} · R${rBest.race} · ${Math.round(rBest.gain)} m ${ADV.mark === "windward" ? "downwind" : "upwind"} 30 s after the mark`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } } });
+        c.fillText(`best: ${rBest.who} · R${rBest.race} · ${Math.round(rBest.gain)} m ${ADV.mark === "windward" ? "downwind" : "upwind"} 30 s after the ${pinOff ? "offset" : "mark"}`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } } });
   const rw = advWindow(rd, -20, 40, ["sog", "twa"]);
   advLines("advRoundSog", rw.T, rw.series, "sog", "speed kt", "mark"); advLines("advRoundTwa", rw.T, rw.series, "twa", "TWA °", "mark");
   const per = new Map();
@@ -1364,14 +1417,27 @@ function drawAdvanced() {
   const HEEL0 = -40, NH = 100;                         // 1-degree heel bins from -40 to +60
   const hv = new Map(), hd = new Map();
   const bins = (mp, name, color, n) => { let a = mp.get(name); if (!a) mp.set(name, a = { color, s: new Float64Array(n), c: new Float64Array(n) }); return a; };
+  // Downwind, VMG depends mostly on the wind angle sailed (deeper or higher), and a boat heels more
+  // when it sails higher, so VMG against heel would mostly show the angle. Each downwind reading is
+  // taken against the race's average VMG at that wind angle (5° bands, every boat picked) and added
+  // to the race's downwind average: "VMG at the same angle".
+  const dnRef = new Map();
   advEach((P, B) => {
-    const b = bins(hv, B.name, B.color, NH), d = bins(hd, B.name, B.color, NH);
+    let r = dnRef.get(P.k); if (!r) dnRef.set(P.k, r = { s: new Float64Array(15), c: new Float64Array(15), S: 0, C: 0 });
+    for (let i = 0; i < B.n; i++) { if (B.st[i] !== "1") continue; const at = Math.abs(B.twa[i]), v = B.vmg[i];
+      if (!(at > 110) || !isFinite(v)) continue; const k = Math.min(14, Math.floor((at - 110) / 5)); r.s[k] += v; r.c[k]++; r.S += v; r.C++; }
+  });
+  advEach((P, B) => {
+    const b = bins(hv, B.name, B.color, NH), d = bins(hd, B.name, B.color, NH), ref = dnRef.get(P.k);
     const half = Math.max(0, Math.round(P.hz) - 1);    // heel and VMG over about 2 s
     for (let i = 0; i < B.n; i++) {
       if (B.st[i] !== "1") continue;
       const at = Math.abs(B.twa[i]); if (!isFinite(at) || !isFinite(B.sog[i])) continue;
       if (at < 70 || at > 110) { let hs = 0, vs = 0, nn = 0; for (let q = i - half; q <= i + half; q++) if (q >= 0 && q < B.n && isFinite(B.heel[q]) && isFinite(B.vmg[q])) { hs += B.heel[q]; vs += B.vmg[q]; nn++; }
-        if (nn && isFinite(B.heel[i])) { const bj = Math.floor(B.heel[i] - HEEL0), tgt = at < 70 ? b : d; if (bj >= 0 && bj < NH) { tgt.s[bj] += vs / nn; tgt.c[bj]++; } } }
+        if (!nn || !isFinite(B.heel[i])) continue;
+        let v = vs / nn;
+        if (at > 110) { const k = Math.min(14, Math.floor((at - 110) / 5)); if (!ref || ref.c[k] < 4 * P.hz) continue; v = v - ref.s[k] / ref.c[k] + ref.S / ref.C; }
+        const bj = Math.floor(B.heel[i] - HEEL0), tgt = at < 70 ? b : d; if (bj >= 0 && bj < NH) { tgt.s[bj] += v; tgt.c[bj]++; } }
     }
     b.hz = d.hz = P.hz;
   });
@@ -1384,14 +1450,14 @@ function drawAdvanced() {
   // VMG pulled towards the overall average in proportion to how little time it has (a band with 20 s
   // is pulled halfway). A band sailed for a few seconds can't win on a lucky gust; one sailed for
   // minutes counts nearly at face value.
-  const PULL_S = 30, PLATEAU = 0.015;
+  const PULL_S = 30, PLATEAU = 0.015, FLAT_GAIN = 0.02, IDEAL_MIN_S = 20;
   const idealHeel = mp => { const S = new Float64Array(NH), N = new Float64Array(NH); let hz = 2;
     for (const a of mp.values()) { hz = a.hz || hz; for (let j = 0; j < NH; j++) { S[j] += a.s[j]; N[j] += a.c[j]; } }
     const tot = N.reduce((x, y) => x + y, 0); if (!tot) return null;
     const mean = S.reduce((x, y) => x + y, 0) / tot, k = PULL_S * hz;
     const V = new Float64Array(NH).fill(NaN);
     let best = null, bv = -Infinity;
-    for (let j = 1; j < NH - 1; j++) { if (N[j] < 3 * hz) continue;
+    for (let j = 1; j < NH - 1; j++) { if (N[j] < IDEAL_MIN_S * hz) continue;   // a band needs this much sailing to be the ideal
       const n = N[j - 1] + 2 * N[j] + N[j + 1], sm = S[j - 1] + 2 * S[j] + S[j + 1];
       V[j] = (sm + k * mean) / (n + k); if (V[j] > bv) { bv = V[j]; best = j; } }
     if (best == null) return null;
@@ -1401,14 +1467,18 @@ function drawAdvanced() {
     while (lo > 1 && V[lo - 1] >= bv * (1 - PLATEAU)) lo--;
     while (hi < NH - 2 && V[hi + 1] >= bv * (1 - PLATEAU)) hi++;
     let tw = 0, tn = 0; for (let j = lo; j <= hi; j++) { tw += (j + HEEL0 + 0.5) * N[j]; tn += N[j]; }
-    return { heel: tw / tn, lo: lo + HEEL0, hi: hi + HEEL0 + 1, vmg: bv, sec: tn / hz }; };
+    // flat: every well-sailed band within FLAT_GAIN of the best, so heel made no difference the data can show
+    let wv = Infinity; for (let j = 1; j < NH - 1; j++) if (isFinite(V[j])) wv = Math.min(wv, V[j]);
+    return { heel: tw / tn, lo: lo + HEEL0, hi: hi + HEEL0 + 1, vmg: bv, sec: tn / hz, flat: wv >= bv * (1 - FLAT_GAIN), gain: bv / wv - 1 }; };
   // Brightness and dot size show time in each band, against that boat's busiest band; under 6 s the dot is hollow
   const scatter = (id, ser, xl, yl, empty, ideal) => { const [cv, c, w, h] = chartCanvas(id); const ys = ser.flatMap(s => s.y).filter(isFinite);
     if (!ys.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(empty, 50, 40); return; }
     const xsF = ser.flatMap(s => s.x.filter((_, j) => isFinite(s.y[j]))); const x0 = Math.min(...xsF) - 1, x1 = Math.max(...xsF) + 1;
     const y0 = Math.floor(Math.min(...ys) * 2) / 2 - 0.2, y1 = Math.ceil(Math.max(...ys) * 2) / 2 + 0.2;
     const [X, Y, , Bm, Tp] = axes(c, w, h, x0, x1, y0, y1, xl, yl);
-    if (ideal && ideal.heel >= x0 && ideal.heel <= x1) { c.save();
+    if (ideal && ideal.flat) { c.fillStyle = C.muted; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";
+      c.fillText(`no clear best heel: every band within ${(ideal.gain * 100).toFixed(1)}% of the best`, w - 10, Tp + 26); c.textAlign = "left"; }
+    else if (ideal && ideal.heel >= x0 && ideal.heel <= x1) { c.save();
       if (ideal.hi - ideal.lo > 1) { c.fillStyle = GOLD; c.globalAlpha = 0.08; c.fillRect(X(Math.max(x0, ideal.lo)), Tp, X(Math.min(x1, ideal.hi)) - X(Math.max(x0, ideal.lo)), h - Bm - Tp); }
       c.strokeStyle = GOLD; c.globalAlpha = 0.8; c.lineWidth = 1.5; c.setLineDash([5, 4]);
       c.beginPath(); c.moveTo(X(ideal.heel), Tp); c.lineTo(X(ideal.heel), h - Bm); c.stroke(); c.restore();
