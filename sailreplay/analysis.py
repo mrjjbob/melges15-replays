@@ -330,7 +330,7 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
                 continue
             j = L[1] + int(np.argmax(seg) if L[0] == 1 else np.argmin(seg))
             if L is not c[-1] and L[0] == 1:
-                o = _offset_after(s, j, hz, wrap180(twd - cs))
+                o = _offset_after(s, j, hz, wrap180(twd - cs), twd)
                 if o is not None:
                     reach_m.append(o["d"])
                     if True:                     # kept even when it doesn't look like an offset: used only on days that have them
@@ -359,7 +359,7 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
     return out
 
 
-def _offset_after(s, j, hz, twa):
+def _offset_after(s, j, hz, twa, twd=None):
     """The windward offset: a second, smaller mark a short reach past the windward mark. After
     rounding, the boat reaches (wind abeam) for a few seconds, then bears away onto the run.
     Returns the spot where the boat settled on the run ({lat, lon, k, d: metres from the windward mark,
@@ -391,8 +391,32 @@ def _offset_after(s, j, hz, twa):
     def port(i):
         la, lo = float(s.lat[i]), float(s.lon[i])
         return _offset(la, lo, float(s.cog[i]) - 90.0, MARK_INSIDE_M) if np.isfinite(s.cog[i]) else (la, lo)
-    lat, lon = port(kb)
-    return {"lat": lat, "lon": lon, "k": kb, "d": float(d), "ok": bool(ok), "turn": port(kw)}
+    w = float(twd[min(len(twd) - 1, kw)]) if twd is not None and np.isfinite(twd[min(len(twd) - 1, kw)]) else None
+    a, b = max(0, kw - int(30 * hz)), min(n, kb + int(20 * hz))
+    turn = _below_track(s, a, b, *port(kw), w)
+    lat, lon = _below_track(s, a, b, *port(kb), w)
+    return {"lat": lat, "lon": lon, "k": kb, "d": float(d), "ok": bool(ok), "turn": turn}
+
+
+MARK_BELOW_TRACK_M = 3.0
+
+
+def _below_track(s, a, b, lat, lon, twd, below=MARK_BELOW_TRACK_M):
+    """A boat rounds a windward mark or offset to windward of it, so the mark is never above the
+    track: if it would be, move it straight downwind until it sits `below` metres under the highest
+    point the track reached within 15 m either side of it (across the wind)."""
+    if twd is None:
+        return lat, lon
+    ml = 111_320.0 * math.cos(math.radians(lat)); t = math.radians(twd)
+    up = lambda la, lo: ((lo - lon) * ml * math.sin(t) + (la - lat) * 111_320.0 * math.cos(t),
+                         (lo - lon) * ml * math.cos(t) - (la - lat) * 111_320.0 * math.sin(t))
+    tops = [u for u, x in (up(s.lat[i], s.lon[i]) for i in range(a, b) if np.isfinite(s.lat[i])) if abs(x) <= 15]
+    if not tops:
+        return lat, lon
+    drop = 0.0 - (max(tops) - below)                   # how far the mark sits above the allowed height
+    if drop <= 0:
+        return lat, lon
+    return _offset(lat, lon, twd + 180.0, drop)
 
 
 WINDWARD_TURN_TWA = 65.0
