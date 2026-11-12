@@ -401,6 +401,41 @@ def _offset_after(s, j, hz, twa, twd=None):
 MARK_BELOW_TRACK_M = 3.0
 
 
+def _marks_below_tracks(marks, series, twd_series, twd_global, lat0, lon0, mlat, mlon):
+    """Final check with the race's own wind and every boat's track as shown: a windward mark or offset
+    is never above a track that went round it. For each pass of each boat (within 40 m of the mark),
+    the mark is kept MARK_BELOW_TRACK_M under the highest point of that pass within 15 m either side."""
+    out = []
+    for m in marks:
+        if m["kind"] not in ("windward", "offset"):
+            out.append(m); continue
+        mx, my = (m["lon"] - lon0) * mlon, (m["lat"] - lat0) * mlat
+        drop = 0.0
+        for s in series:
+            d = np.hypot(s.x - mx, s.y - my)
+            near = np.where(np.isfinite(d) & (d < 40))[0]
+            if not len(near):
+                continue
+            for run in np.split(near, np.where(np.diff(near) > 1)[0] + 1):
+                mid = int(run[len(run) // 2])
+                w = twd_series[mid] if twd_series is not None and np.isfinite(twd_series[mid]) else twd_global
+                if w is None:
+                    continue
+                t = math.radians(w)
+                dx, dy = s.x[run] - mx, s.y[run] - my
+                up = dx * math.sin(t) + dy * math.cos(t)
+                ac = dx * math.cos(t) - dy * math.sin(t)
+                beside = np.abs(ac) <= 15
+                if beside.any():
+                    drop = max(drop, MARK_BELOW_TRACK_M - float(np.max(up[beside])))
+        if drop > 0:
+            w = twd_global if twd_global is not None else 0.0
+            la, lo = _offset(m["lat"], m["lon"], w + 180.0, drop)
+            m = {**m, "lat": la, "lon": lo}
+        out.append(m)
+    return out
+
+
 def _below_track(s, a, b, lat, lon, twd, below=MARK_BELOW_TRACK_M):
     """A boat rounds a windward mark or offset to windward of it, so the mark is never above the
     track: if it would be, move it straight downwind until it sits `below` metres under the highest
@@ -1114,6 +1149,8 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
 
     # ---- wind ------------------------------------------------------------------------
     twd_series, twd_global, twd_source = _estimate_wind(series, n, hz, gun_i, line, twd, logs, notes)
+    if race is not None and race.get("marks"):
+        race = {**race, "marks": _marks_below_tracks(race["marks"], series, twd_series, twd_global, lat0, lon0, mlat, mlon)}
 
     # ---- per-boat analysis ---------------------------------------------------------------
     if twd_global is not None:
@@ -1191,6 +1228,7 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
             "course": (race or {}).get("course"),
             "course_letter": (race or {}).get("course_letter", ""),
             "marks": [{"kind": m["kind"], "lat": _r(m["lat"], 6), "lon": _r(m["lon"], 6),
+                       **({"leg": int(m["leg"])} if m.get("leg") is not None and m["kind"] in ("windward", "offset") else {}),
                        **({"gate": [{"rounded": g["rounded"], "lat": _r(g["lat"], 6), "lon": _r(g["lon"], 6)} for g in m["gate"]]}
                           if m.get("gate") else {})} for m in (race or {}).get("marks", [])],
             "gate": bool((race or {}).get("gate")),

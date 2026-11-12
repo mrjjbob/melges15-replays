@@ -1179,23 +1179,31 @@ function advRoundings(which, pin) {
   const lbl = which === "windward" ? "Windward mark" : "Leeward mark", ev = [];
   advEach((P, B) => {
     const all = P.M.marks || [];
-    const offs = which === "windward" && pin === "offset" ? all.filter(m => m.kind === "offset").map(m => P.xy(m.lat, m.lon)) : [];
-    const ww = all.filter(m => m.kind === which && !m.gate).map(m => P.xy(m.lat, m.lon));
+    // the offset and windward mark of each lap carry the leg they follow, so a rounding is paired with its own lap's marks
+    const offM = which === "windward" && pin === "offset" ? all.filter(m => m.kind === "offset").sort((a, b) => (a.leg ?? 0) - (b.leg ?? 0)) : [];
+    const offs = offM.map(m => P.xy(m.lat, m.lon));
+    const wwM = all.filter(m => m.kind === which && !m.gate);
+    const ww = wwM.map(m => P.xy(m.lat, m.lon));
+    let nth = 0;                                       // this boat's windward roundings so far in the race
     const gates = all.filter(m => m.kind === which && m.gate).map(m => {
       const g = m.gate.map(q => ({ side: q.rounded, xy: P.xy(q.lat, q.lon) }));
       return g.map(q => ({ ...q, mid: [g.reduce((a, c) => a + c.xy[0], 0) / g.length, g.reduce((a, c) => a + c.xy[1], 0) / g.length] }));
     }).flat();
-    const marks = offs.length ? offs.map(xy => ({ xy, pinned: "offset" })) : ww.map(xy => ({ xy })).concat(gates);
-    if (!marks.length) return;
+    const allMarks = offs.length ? offM.map((m, j) => ({ xy: offs[j], pinned: "offset", leg: m.leg })) : ww.map(xy => ({ xy })).concat(gates);
+    if (!allMarks.length) return;
     for (const m of B.b.manoeuvres) {
       if (m.kind !== "rounding" || m.label !== lbl) continue;
       const c0 = Math.round(m.t * P.hz);
+      // with legs known, only this lap's offset; otherwise the nearest
+      const marks = offs.length && offM.every(q => q.leg != null) && allMarks[nth] ? [allMarks[nth]] : allMarks;
+      nth++;
       let best = Infinity, bi = null, mk = null;
       for (let i = Math.max(0, c0 - 60 * P.hz); i < Math.min(B.n, c0 + 30 * P.hz); i++) for (const q of marks) { const d = Math.hypot(B.x[i] - q.xy[0], B.y[i] - q.xy[1]); if (d < best) { best = d; bi = i; mk = q; } }
       if (bi == null || best >= 60) continue;
       const e = { P, B, i0: bi, mark: mk.xy, dist: best, side: mk.side || null, mid: mk.mid || null, pinned: mk.pinned || null };
-      if (mk.pinned) {   // the windward mark this offset belongs to: the nearest one upwind of it
-        const near = ww.slice().sort((p, q) => Math.hypot(p[0] - mk.xy[0], p[1] - mk.xy[1]) - Math.hypot(q[0] - mk.xy[0], q[1] - mk.xy[1]))[0];
+      if (mk.pinned) {   // the windward mark this offset belongs to: same leg, else the nearest
+        const j = wwM.findIndex(q => q.leg != null && q.leg === mk.leg);
+        const near = j >= 0 ? ww[j] : ww.slice().sort((p, q) => Math.hypot(p[0] - mk.xy[0], p[1] - mk.xy[1]) - Math.hypot(q[0] - mk.xy[0], q[1] - mk.xy[1]))[0];
         if (near) e.wmark = near;
       }
       ev.push(e);
@@ -1376,7 +1384,7 @@ function drawAdvanced() {
     const gain = end && isFinite(end[1]) ? (ADV.mark === "windward" ? -end[1] : end[1]) : null;
     const sh = gateOn && e.side && G[e.side] ? G[e.side] : null;
     if (sh) for (const q of pts) { q[0] += sh[0]; q[1] += sh[1]; }
-    if (e.pinned && e.wmark && !wmarks.some(w => w.k === P.k && Math.hypot(w.src[0] - e.wmark[0], w.src[1] - e.wmark[1]) < 1)) {
+    if (e.pinned && e.wmark && !wmarks.some(w => w.k === P.k && Math.hypot(w.src[0] - e.wmark[0], w.src[1] - e.wmark[1]) < 0.5)) {
       wmarks.push({ k: P.k, src: e.wmark, xy: rotTo(e.wmark[0] - mark[0], e.wmark[1] - mark[1], twdOf(e)) }); }
     return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1 };
   });
