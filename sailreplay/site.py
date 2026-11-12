@@ -233,6 +233,9 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         title = nice + (f" · {label}" if label else f" · {ser['name']}" if ser else "")
         entry = {"date": day, "title": title, "date_title": nice, "boats": [n for n, _ in boats], "races": 0,
                  "series": ser["name"] if ser else None, "label": label}
+        ev = next((e for e in site_cfg.get("events") or [] if day in (e.get("dates") or [])), None)
+        if ev:
+            entry["event"] = ev["name"]
         try:
             d = analysis.build_day(boats, title=title, colors=colors, heel_offsets=heel)
         except ValueError as e:
@@ -326,6 +329,8 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         "other_count": len(other_days),
         "series": [{"name": x["name"], "start": x.get("start"), "end": x.get("end")} for x in series_cfg],
         "links": site_cfg.get("links") or [],
+        # multi-day events ("events" in site.json): their days are boxed together on the list
+        "events": [{"name": e["name"], "dates": e.get("dates") or [], "where": e.get("where")} for e in site_cfg.get("events") or []],
         "results_note": site_cfg.get("results_note", "A day not yet on the club's scoring sheet is scored from the uploaded Atlas data, so it may change when the sheet is added."),
     }
     for d in days:

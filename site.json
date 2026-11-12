@@ -18,8 +18,15 @@
   "labels": {
     "2026-03-22": "Test race",
     "2024-09-08": "Test race",
-    "2025-11-30": "Test race"
+    "2025-11-30": "Test race",
+    "2026-08-01": "Southampton Regatta · Day 1",
+    "2026-08-02": "Southampton Regatta · Day 2",
+    "2026-08-16": "Down Bay Regatta",
+    "2026-09-05": "Coaching session"
   },
+  "events": [
+    {"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton"}
+  ],
   "hidden_days": [
     "2024-09-08",
     "2025-11-30",
