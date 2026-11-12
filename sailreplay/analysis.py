@@ -620,7 +620,8 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
                 fin[name] = t if cf is None or t < cf else cf
         r["finish"] = fin
         # a last beat the sailing missed (short, or eased into the finish) but the timer saw
-        if r.get("course_letter") in COURSES and r.get("legs") and r["legs"][-1] == "down":
+        if r.get("course_letter") in COURSES and r.get("legs") and r["legs"][-1] == "down" \
+                and not any(m["kind"] == "offset" for m in r.get("marks", [])):   # CYC courses have no offset
             ends = [t for n, t in rend.items() if t > max(c["finish"].values(), default=0) + 45_000]
             if ends and _made_ground_upwind(boats, max(c["finish"].values()), min(ends), r["twd"]) >= 50:
                 r["legs"] = r["legs"] + ["up"]
@@ -814,6 +815,20 @@ def _course_races(boats, guns=None) -> list[dict]:
         r["start_ms"] = int(np.median(r.pop("_starts")))
         chains = r.pop("_chains")
         best = max(chains, key=lambda c: len(c["legs"]))
+        # With three or more boats, legs most of them sailed win: a boat that kept sailing up and
+        # down after finishing (or went back upwind to the committee boat) runs on past the course.
+        # Its extra legs are dropped and it finished at the end of the course's last leg.
+        seqs = [tuple(c["legs"]) for c in chains]
+        common = max(set(seqs), key=seqs.count)
+        if len(chains) >= 3 and seqs.count(common) * 2 > len(chains) and len(common) < len(best["legs"]):
+            n_leg = len(common)
+            best = next(c for c in chains if tuple(c["legs"]) == common)
+            for c in chains:
+                if len(c["legs"]) > n_leg and tuple(c["legs"][:n_leg]) == common and c.get("_legs"):
+                    nm = next((nm for nm, t in r["finish"].items() if t == c["finish_ms"]), None)
+                    if nm is not None:
+                        r["finish"][nm] = int(c["_legs"][n_leg - 1][2])
+                    c["offsets"] = [o for o in c.get("offsets", []) if o["leg"] < n_leg]
         r["legs"] = best["legs"]
         # the course is the one the boat that sailed the most legs sailed (another boat's log can
         # miss a short last beat); otherwise the most common one
