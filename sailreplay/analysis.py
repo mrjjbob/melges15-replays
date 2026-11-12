@@ -607,6 +607,8 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
             for k in ("line_est", "line_basis"):
                 if k in c:
                     r[k] = c[k]
+            if (r.get("line_est") or {}).get("separate"):
+                _start_line_at_gun(r, boats, g)
         last_mark = max((m.get("t", 0) for m in c.get("marks", []) if m["kind"] in ("windward", "leeward")), default=0)
         fin = dict(c["finish"])
         rend = dict(r["finish"])                       # race_end pressed on each boat's timer
@@ -635,6 +637,41 @@ def _with_courses(timer: list[dict], course: list[dict], boats) -> list[dict]:
         if pinged and r.get("legs") and r["legs"][-1] == "up":
             _finish_at_pinged_line(r, boats)
     return timer
+
+
+def _start_line_at_gun(r, boats, g):
+    """With the gun known from the timers, the start line is where the boats were at the gun
+    (just above them), not where the sailing alone guessed the start was. Keeps its direction."""
+    le = dict(r["line_est"])
+    pts = []
+    for _, log in boats:
+        row = min(log.track, key=lambda q: abs(q["t"] - g), default=None)
+        if row and abs(row["t"] - g) <= 3000:
+            pts.append((row["lat"], row["lon"]))
+    if not pts:
+        return
+    axis = _course_axis(r)
+    T = math.radians(axis if axis is not None else r.get("twd") or 0.0)
+    ux, uy, rx, ry = math.sin(T), math.cos(T), math.cos(T), -math.sin(T)
+    lat0, lon0 = le["rc"]; mlon = 111_320 * math.cos(math.radians(lat0))
+    loc = lambda p: ((p[1] - lon0) * mlon, (p[0] - lat0) * 111_320)
+    a_of = lambda p: loc(p)[0] * rx + loc(p)[1] * ry
+    q_of = lambda p: loc(p)[0] * ux + loc(p)[1] * uy
+    a_b = [a_of(p) for p in pts]; q_b = [q_of(p) for p in pts]
+    a_pin, a_rc = a_of(le["pin_end"]), a_of(le["rc"])
+    k = (q_of(le["rc"]) - q_of(le["pin_end"])) / (a_rc - a_pin) if a_rc != a_pin else 0.0
+    am, qm = float(np.median(a_b)), float(np.median(q_b)) + START_LINE_ABOVE_GUN_M
+    rc = max(a_b) + 15.0
+    ln = max(45.0, rc - min(a_b) + 20.0)
+    def ll(a):
+        q = qm + k * (a - am)
+        X, Y = q * ux + a * rx, q * uy + a * ry
+        return [lat0 + Y / 111_320, lon0 + X / mlon]
+    le.update(pin_end=ll(rc - ln), rc=ll(rc), start_len_m=round(ln), start_at="gun")
+    r["line_est"] = le
+    for m in r.get("marks", []):
+        if m["kind"] == "start":
+            m["lat"], m["lon"] = ll(am)
 
 
 def _pinged_line(boats, g):
@@ -870,7 +907,7 @@ def _share_committee(races: list[dict], boats, near_m: float = 40.0) -> None:
     def xy(p, ref):
         ml = 111_320 * math.cos(math.radians(ref[0]))
         return ((p[1] - ref[1]) * ml, (p[0] - ref[0]) * 111_320)
-    est = [r for r in races if r.get("line_est") and r.get("_onset")]
+    est = [r for r in races if r.get("line_est") and r.get("_onset") and not r["line_est"].get("separate")]
     groups = []
     for r in est:
         rc = r["line_est"]["rc"]
@@ -984,6 +1021,11 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
         seg = np.abs(q[lo:hi])
         return lo + int(np.nanargmin(seg)) if np.isfinite(seg).any() else v["ia"]
 
+    if sgn < 0 and fixed_rc is None and _SEPARATE_FINISH:
+        _fit_separate_lines(race, per, V, at_gun, a_on, q_on, a_dr, q_dr, k_s, start_crossing, crossing,
+                            hz, lat0, lon0, mlon, ux, uy, rx, ry)
+        return
+
     # pass 1: one straight line square to the course, to find which side each line is on
     flat = lambda a: q0 + 0 * a
     def times(qs, qf):
@@ -1038,6 +1080,56 @@ def _fit_line(race: dict, boats: list[tuple[str, VkxLog]], hz: float = 2.0,
             m["lat"], m["lon"] = ll(float(np.mean(a_s)), qs)
         elif m["kind"] == "finish":
             m["lat"], m["lon"] = ll(float(np.mean(a_f)), qf)
+
+# Set for a day whose sailing instructions put a downwind finish on a line of its own
+# (site.json "separate_finish"); CYC's start and finish share the committee boat
+_SEPARATE_FINISH = False
+START_LINE_ABOVE_GUN_M = 3.0     # boats are just below the start line at the gun
+FINISH_LINE_ABOVE_DROP_M = 5.0   # on a downwind finish boats cross, then round up and slow
+
+
+def _fit_separate_lines(race, per, V, at_gun, a_on, q_on, a_dr, q_dr, k_s, start_crossing, crossing,
+                        hz, lat0, lon0, mlon, ux, uy, rx, ry):
+    """A downwind finish is a line of its own near the leeward end (Down Bay SI 12.1: at the
+    committee boat, between a pin at the starboard end and a hippity hop off the boat), not the far
+    end of the start line. So each line is placed where the boats were: the start just above where
+    they were at the gun (committee boat at the right-hand end looking up the course, SI 10.2), the
+    finish just above where they slowed after finishing."""
+    qs0 = float(np.nanmedian(q_on)) + START_LINE_ABOVE_GUN_M
+    as0 = float(np.nanmedian(a_on))
+    qf0 = float(np.nanmedian(q_dr)) + FINISH_LINE_ABOVE_DROP_M
+    qs = lambda a: qs0 + k_s * (a - as0)
+    qf = lambda a: qf0 + 0 * a
+    starts, fins, a_s, a_f = [], {}, [], []
+    for name, v in per.items():
+        i_s = start_crossing(v, qs)
+        i_f = crossing(v, v["drop"] - int(90 * hz), v["drop"] + int(5 * hz), v["drop"], qf, -1.0) or v["drop"]
+        starts.append(int(v["grid"][i_s])); fins[name] = int(v["grid"][i_f])
+        a_s.append(float(v["a"][i_s])); a_f.append(float(v["a"][i_f]))
+    rc = max(a_on + a_s) + 15.0
+    st_len = max(45.0, rc - min(a_on + a_s) + 20.0)
+    pin = rc - st_len
+    fm = float(np.mean(a_f))
+    f_half = max(10.0, (max(a_f) - min(a_f)) / 2 + 8.0)
+
+    def ll(a, qline):
+        qq = qline(a)
+        X, Y = qq * ux + a * rx, qq * uy + a * ry
+        return [lat0 + Y / 111_320, lon0 + X / mlon]
+    race["start_ms"] = int(np.median(starts))
+    race["finish"] = fins
+    race["line_est"] = {"pin_end": ll(pin, qs), "rc": ll(rc, qs),
+                        # finish: hippity hop off the committee boat (right) ... pin at the starboard end (left)
+                        "finish_from": ll(fm + f_half, qf), "finish_end": ll(fm - f_half, qf),
+                        "separate": True, "start_len_m": round(st_len), "finish_len_m": round(2 * f_half),
+                        "basis": race["line_basis"],
+                        "start_tilt": round(math.degrees(math.atan(k_s))), "finish_tilt": 0}
+    for m in race["marks"]:
+        if m["kind"] == "start":
+            m["lat"], m["lon"] = ll(float(np.mean(a_s)), qs)
+        elif m["kind"] == "finish":
+            m["lat"], m["lon"] = ll(fm, qf)
+
 
 def course_changes(races: list[dict]) -> None:
     """Annotate each race with course length and how far each mark moved since the previous race."""
@@ -2238,10 +2330,15 @@ def _trim_sail_in(races, boats, area):
                 r["sail_in_trimmed"] = True
 
 
-def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, **kw) -> dict:
+def build_day(boats: list[tuple[str, VkxLog]], *, title: str | None = None, separate_finish: bool = False, **kw) -> dict:
     """Every race in the logs, each as its own race model, plus a day summary."""
     from datetime import datetime
-    races = find_races(boats)
+    global _SEPARATE_FINISH
+    _SEPARATE_FINISH = separate_finish
+    try:
+        races = find_races(boats)
+    finally:
+        _SEPARATE_FINISH = False
     if not races:
         raise ValueError("No races found: no race timer, and no beat-then-run pattern in the sailing.")
     course_changes(races)
