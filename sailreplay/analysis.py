@@ -333,9 +333,9 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
                 o = _offset_after(s, j, hz, wrap180(twd - cs))
                 if o is not None:
                     reach_m.append(o["d"])
-                    if o["ok"]:
+                    if True:                     # kept even when it doesn't look like an offset: used only on days that have them
                         offsets.append({"kind": "offset", "lat": o["lat"], "lon": o["lon"], "t": int(grid[o["k"]]),
-                                        "leg": li, "d": o["d"], "turn": o["turn"]})
+                                        "leg": li, "d": o["d"], "turn": o["turn"], "ok": o["ok"]})
             if L is not c[-1]:
                 mk = {"kind": "windward" if L[0] == 1 else "leeward",
                       "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j]), "leg": li}
@@ -378,12 +378,25 @@ def _offset_after(s, j, hz, twa):
     secs = (k2 - k1) / hz
     d = math.hypot((s.lon[k2] - s.lon[j]) * 111_320 * math.cos(math.radians(s.lat[j])), (s.lat[k2] - s.lat[j]) * 111_320)
     ok = (3 <= secs <= 45 and len(reach) > 0 and 60 <= float(np.nanmedian(reach)) <= 115 and 12 <= d <= 180)
-    lat, lon = float(s.lat[k2]), float(s.lon[k2])
-    cs = s.cog[k2]
-    if np.isfinite(cs):                                   # left to port, like the windward mark
-        lat, lon = _offset(lat, lon, float(cs) - 90.0, MARK_INSIDE_M)
-    return {"lat": lat, "lon": lon, "k": k2, "d": float(d), "ok": bool(ok),
-            "turn": (float(s.lat[k1]), float(s.lon[k1]))}           # where it turned off the beat: the windward mark
+    # Where the marks were, as a sailor reads the track (checked against Max's marks on 20 roundings:
+    # windward within 2 m, offset within 4 m, median): the windward mark is where the boat came off the
+    # beat (wind angle through WINDWARD_TURN_TWA), the offset where it bore away (through OFFSET_TURN_TWA),
+    # each a few metres to port of the track
+    # bore away: first time the wind angle stays past OFFSET_TURN_TWA (two readings running);
+    # off the beat: the last moment before that it was still under WINDWARD_TURN_TWA (up to 40 s back)
+    kb = next((i for i in range(k1, min(n - 1, k2 + 1)) if np.isfinite(at[i]) and at[i] >= OFFSET_TURN_TWA
+               and at[i + 1] >= OFFSET_TURN_TWA), k2)
+    lo = max(0, j - int(40 * hz))
+    kw = next((i + 1 for i in range(kb - 1, lo - 1, -1) if np.isfinite(at[i]) and at[i] < WINDWARD_TURN_TWA), k1)
+    def port(i):
+        la, lo = float(s.lat[i]), float(s.lon[i])
+        return _offset(la, lo, float(s.cog[i]) - 90.0, MARK_INSIDE_M) if np.isfinite(s.cog[i]) else (la, lo)
+    lat, lon = port(kb)
+    return {"lat": lat, "lon": lon, "k": kb, "d": float(d), "ok": bool(ok), "turn": port(kw)}
+
+
+WINDWARD_TURN_TWA = 65.0
+OFFSET_TURN_TWA = 110.0
 
 
 # A day has windward offsets when the boats typically reach this far from the windward mark before
@@ -642,38 +655,19 @@ def _made_ground_upwind(boats, t0, t1, twd) -> float:
 
 
 def _windward_from_offsets(races):
-    """The offset is laid a set distance and bearing from the windward mark (relative to the wind),
-    so it is the same all day. The offset is placed well (where boats bear away) but the windward
-    mark from the sailing is rough (the boats' highest point), so take the typical windward-mark-to-
-    offset step for the day, measured from where each boat turned off the beat to where it bore
-    away, and put each windward mark that step back from its offset."""
-    steps = []
+    """On a course with an offset the boats' highest point is a poor guide to the windward mark (they
+    can luff above it on the way to the offset). Put it where they came off the beat instead, averaged
+    over the boats and roundings that show it."""
     for r in races:
-        tw = math.radians(r.get("twd") or 0.0)
-        for o in (m for m in r["marks"] if m["kind"] == "offset"):
-            for la, lo in o.get("turns", []):
-                ml = 111_320.0 * math.cos(math.radians(la))
-                dx, dy = (o["lon"] - lo) * ml, (o["lat"] - la) * 111_320.0
-                # into the wind's frame: along = towards the wind, across = to its right looking upwind
-                steps.append((dx * math.sin(tw) + dy * math.cos(tw), dx * math.cos(tw) - dy * math.sin(tw)))
-    if len(steps) < 2:
-        return
-    along, across = float(np.median([a for a, _ in steps])), float(np.median([c for _, c in steps]))
-    for r in races:
-        tw = math.radians(r.get("twd") or 0.0)
-        dx = along * math.sin(tw) + across * math.cos(tw)
-        dy = along * math.cos(tw) - across * math.sin(tw)
         offs = {m.get("leg"): m for m in r["marks"] if m["kind"] == "offset"}
         for w in (m for m in r["marks"] if m["kind"] == "windward"):
             o = offs.get(w.get("leg"))
-            if o is None:
-                continue
-            ml = 111_320.0 * math.cos(math.radians(o["lat"]))
-            w["lat"], w["lon"] = o["lat"] - dy / 111_320.0, o["lon"] - dx / ml
-            w["from_offset"] = True
+            turns = (o or {}).get("turns") or []
+            if turns:
+                w["lat"], w["lon"] = float(np.mean([q[0] for q in turns])), float(np.mean([q[1] for q in turns]))
+                w["from_turn"] = True
         for o in offs.values():
             o.pop("turns", None)
-        r["offset_step_m"] = [round(along), round(across)]
 
 
 def _fill_offsets(races):
