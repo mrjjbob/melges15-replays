@@ -225,6 +225,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
     series_cfg = site_cfg.get("series") or []
     labels = site_cfg.get("labels") or {}
     days = []
+    event_days: dict[str, list] = {}
     for day in sorted(by_day, reverse=True):
         boats = [(n, merge_logs(ls, n)) for n, ls in sorted(by_day[day].items())]
         nice = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b %Y")
@@ -243,6 +244,15 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
             days.append(entry)
             log(f"{day}: {len(boats)} boat(s), no races found")
             continue
+        # Course names. The CYC letters (W, W2, L, M, Z) only mean something in the club's own season;
+        # an event elsewhere names its courses in its sailing instructions: "course_names" maps the
+        # legs sailed ("up-down-up-down") to that name, per event or per date. Otherwise no letter.
+        names = (ev or {}).get("course_names") or (site_cfg.get("course_names") or {}).get(day)
+        if names or not entry["series"]:
+            for k, row in enumerate(d["day"]["races"]):
+                letter = (names or {}).get("-".join(row.get("legs") or []), "")
+                row["course_letter"] = letter
+                d["races"][k]["meta"]["course_letter"] = letter
         # course letters from the committee's board, when given in site.json ("courses": {date: ["W", "M", ...]})
         for k, letter in enumerate((site_cfg.get("courses") or {}).get(day, [])):
             if letter and k < len(d["races"]):
@@ -252,7 +262,10 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         d["day"]["home"] = "../other.html" if off_season else "../index.html"
         d["day"]["home_label"] = "← Other races" if off_season else "← All days"
         d["day"]["series"] = entry["series"]
-        replay.write_html(d, out / "days" / f"{day}.html")
+        if ev and len(ev.get("dates") or []) > 1:
+            event_days.setdefault(ev["name"], []).append((day, d, entry))   # written as one page below
+        else:
+            replay.write_html(d, out / "days" / f"{day}.html")
         rs = d["day"]["races"]
         tws = [r["tws"] for r in rs if r.get("tws")]
         twd = [r["twd"] for r in rs if r.get("twd") is not None]
@@ -272,6 +285,29 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         })
         days.append(entry)
         log(f"{day}: {len(boats)} boat(s), {len(rs)} race(s)")
+
+    # a regatta over several days: one replay page, the race picker grouped by day and the races
+    # numbered through the event; each day's debrief table stays that day's, the Advanced tab spans all
+    for name, parts in event_days.items():
+        parts.sort(key=lambda p: p[0])
+        ev = next(e for e in site_cfg.get("events") or [] if e["name"] == name)
+        slug = ev.get("slug") or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        races, rows, dlist, n = [], [], [], 0
+        for i, (day, d, entry) in enumerate(parts):
+            label = (entry.get("label") or "").split(" · ")[-1] if " · " in (entry.get("label") or "") else f"Day {i + 1}"
+            dlist.append({"date": day, "label": label, "title": d["day"]["title"], "first": n + 1})
+            for rr, row in zip(d["races"], d["day"]["races"]):
+                n += 1
+                rr["meta"]["title"] = f"Race {n}"
+                rr["meta"]["race_no"] = n
+                rr["meta"]["day_idx"] = i
+                races.append(rr)
+                rows.append({**row, "race": n, "day": i, "day_race": row["race"]})
+            entry["href"] = f"days/{slug}.html#r{dlist[-1]['first']}"
+        first = parts[0][1]["day"]
+        dd = {"day": {**first, "title": name, "races": rows, "days": dlist}, "races": races}
+        replay.write_html(dd, out / "days" / f"{slug}.html")
+        log(f"{name}: {len(parts)} days, {n} races on one page")
 
     # official results from the club's scoring workbook (results/*.xlsx), when one has been added
     by_sail = {str(b["sail"]): fleet_label(b) for b in (fleet or []) if b.get("sail")}

@@ -12,6 +12,6 @@
     {"sail": "961", "name": "Schneider", "serials": [], "aliases": []},
     {"sail": "263", "name": "Gilchrist", "serials": [], "aliases": []},
     {"sail": "697", "name": "Grunbeck", "serials": [], "aliases": []},
-    {"sail": "", "name": "Kriegstein", "skipper": "Alan Kriegstein", "serials": [], "aliases": ["Alan Kriegstein"], "_note": "sails outside the CYC Frostbite; add his sail number when known"}
+    {"sail": "272", "name": "Kriegstein", "skipper": "Alan Kriegstein", "boat": "Five-fifteen", "serials": [], "aliases": ["Alan Kriegstein"], "_note": "USA 272, sails outside the CYC Frostbite"}
   ]
 }

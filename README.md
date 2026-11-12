@@ -64,7 +64,8 @@ Each day page has an **Advanced** tab that lays every race over each other, with
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - **Official results:** put the club's scoring workbook (`.xlsx`) in `results/`. Each Melges 15 table in it (a date, a `MELGES 15` row with race numbers and TOTAL, one row per boat, then an optional weather line) replaces the preliminary scores for that day, and the results page marks the day Official. Boats are matched by sail number. A sheet dated up to three days after a racing day is used for that day. Add the updated workbook each week, under the same name to replace it.
 - **Other races:** the home page lists only days in a series. Everything else (practice, test sessions, racing outside the season) is on `other.html`, linked from the home page footer as "Other races". Dates in `hidden_days` are moved there too, even inside a series. Their replay pages are built the same way.
-- **Multi-day events:** `"events": [{"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton"}]` boxes those days together on the list, with the dates, total races and place. Label each day `"<event> · Day 1"` and the box shows just "Day 1".
+- **Multi-day events:** `"events": [{"name": "Southampton Regatta", "dates": ["2026-08-01", "2026-08-02"], "where": "Shinnecock Bay, Southampton", "slug": "southampton-2026"}]` boxes those days together on the list, with the dates, total races and place. Label each day `"<event> · Day 1"` and the box shows just "Day 1". The event gets one replay page (`days/<slug>.html`): races numbered through the event and grouped by day in the picker, each debrief's day table showing just that day, and the Advanced tab covering every day.
+- **Course names away from home:** the W/W2/L/M/Z letters are CYC's and only used in the season. An event's own courses go under `"course_names"` (on the event, or per date at the top level), keyed by the legs sailed: `{"up-down-up-down": "L4", "up-down-up": "W3"}`. Other days outside the season show no letter.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
 ### Recalls and penalty turns
@@ -75,6 +76,11 @@ A boat shows red (its card and its name on the map) while it looks to be sorting
 - **Penalty turn:** a full circle one way inside 45 seconds (two in a row count as two turns), until the boat is back up to speed. Next to a mark it shows as a mark turn.
 
 These are guesses from GPS against estimated lines and marks, and many penalties are taken without a log showing them, so each one only stays red for a short time (at most about a minute and a half) and they never change the results.
+
+### Windward offset and sailing in
+
+- **Windward offset:** when the boats reach off from the windward mark for a few seconds (3 to 45 s, 12 to 180 m) before bearing away, the replay shows a smaller red offset mark there. A day counts as having offsets only when the boats typically reach 22 m or more past the windward mark before bearing away; without an offset they bear away within a few boat lengths. If one rounding doesn't show it, it is placed where the race's (or the day's) other offsets sit. Setting: `OFFSET_DAY_MEDIAN_M` in `sailreplay/analysis.py`.
+- **Sailing in:** the racing area is a circle round every mark found, 400 m past the furthest (`AREA_MARGIN_M`). On a practice day with no marks it is where the boats spent the time between guns. A finish found after a boat had left the area for good is the sail home, not the finish: the race then ends where the last run reached the leeward mark (a downwind finish), or where the boat left the area. A last "beat" sailed without a tack straight out of the area is dropped as the sail in, and a replay with no finish ends once the boats leave the area.
 
 ### Leeward gate
 
