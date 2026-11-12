@@ -85,6 +85,7 @@ code { font: 500 13px var(--f-data); background: var(--water); border: 1px solid
 .problems { margin-top: 18px; color: var(--muted); font-size: 13.5px; }
 .problems summary { cursor: pointer; }
 footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+footer a.other-link { color: inherit; }
 
 @media (max-width: 860px) {
   .grid { grid-template-columns: 1fr; }
@@ -148,9 +149,14 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 const compass = d => POINTS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
 
-$("title").textContent = S.title;
+const ARCH = !!S.archive;                    // other.html: races outside the season
+$("title").textContent = ARCH ? "Other races" : S.title;
+if (ARCH) {
+  const rl = document.querySelector(".results-link"); rl.href = "index.html"; rl.textContent = "← The season";
+  $("add").hidden = true; document.querySelector(".grid").style.gridTemplateColumns = "minmax(0, 1fr)";
+}
 $("club").textContent = S.club || "Melges 15 fleet";
-$("links").innerHTML = (S.links || []).map(l => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join("");
+$("links").innerHTML = ARCH ? "" : (S.links || []).map(l => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join("");
 const racing = S.days.filter(d => d.races);
 $("meta").textContent = racing.length
   ? `${racing.length} racing day${racing.length === 1 ? "" : "s"} · ${racing.reduce((a, d) => a + d.races, 0)} races · ${S.boat_count} boat${S.boat_count === 1 ? "" : "s"}`
@@ -159,11 +165,12 @@ $("meta").textContent = racing.length
 const host = $("days");
 const fmtD = x => new Date(x + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 const groups = [];
-for (const se of (S.series || []).filter(x => x.start).sort((a, b) => b.start.localeCompare(a.start))) {
+if (ARCH) groups.push({ name: "Other races", sub: "Practice, test sessions and racing outside the Frostbite season. Not scored.", days: S.days });
+else for (const se of (S.series || []).filter(x => x.start).sort((a, b) => b.start.localeCompare(a.start))) {
   groups.push({ name: se.name, sub: `From ${fmtD(se.start)}`, days: S.days.filter(d => d.series === se.name) });
 }
-for (const se of (S.series || []).filter(x => !x.start)) groups.push({ name: se.name, sub: "Dates to be announced", days: [], tba: true });
-const other = S.days.filter(d => !d.series);
+if (!ARCH) for (const se of (S.series || []).filter(x => !x.start)) groups.push({ name: se.name, sub: "Dates to be announced", days: [], tba: true });
+const other = ARCH ? [] : S.days.filter(d => !d.series);
 if (other.length || !groups.length) groups.push({ name: groups.length ? "Other days" : "Racing days", sub: groups.length ? "Practice and test sessions, not scored" : "", days: other });
 for (const g of groups) {
   const sec = document.createElement("div"); sec.className = "group";
@@ -211,6 +218,6 @@ if (S.problems && S.problems.length) {
   p.querySelector("ul").innerHTML = S.problems.map(x => `<li>${esc(x)}</li>`).join("");
 }
 const up = new Date(S.updated);
-$("foot").innerHTML = `Updated ${up.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · Built with sailreplay from Vakaros Atlas logs.`;
+$("foot").innerHTML = `Updated ${up.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · Built with sailreplay from Vakaros Atlas logs.${S.other_count ? ` · <a class="other-link" href="other.html">Other races (${S.other_count})</a>` : ""}`;
 })();
 </script>

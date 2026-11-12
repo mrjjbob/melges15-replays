@@ -309,9 +309,9 @@ $("title").textContent = M.title;
 document.title = DAY ? DAY.title : M.title;
 $("sub").textContent = (M.day_title || date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })) + " · " + (boats.length === 1 ? boats[0].name : boats.length + " boats") + (R.line ? " · line " + R.line.length_m + " m" : M.course && M.course.length_m ? " · course " + (M.course_letter ? M.course_letter + ", " : "") + M.course.length_m + " m" : "");
 if (DAY && DAY.home) {
-  $("home").href = DAY.home; $("home").hidden = false;
+  $("home").href = DAY.home; $("home").hidden = false; if (DAY.home_label) $("home").textContent = DAY.home_label;
   // on the fleet site: the fleet logo beside the title, linking home, and the site icon
-  const base = DAY.home.replace(/index\.html$/, "");
+  const base = DAY.home.replace(/[^/]*$/, "");
   const a = document.createElement("a"); a.href = DAY.home; a.className = "logo"; a.innerHTML = `<img src="${base}logo.png" alt="Melges 15">`;
   document.querySelector(".top .title").before(a);
   const ic = document.createElement("link"); ic.rel = "icon"; ic.type = "image/png"; ic.href = base + "favicon.png"; document.head.appendChild(ic);

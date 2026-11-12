@@ -213,6 +213,7 @@ def test_site_builds(tmp_path):
     hid = site.build_site(logs, tmp_path / "_hid", site_cfg={"hidden_days": [day]}, repo="a/b", log=lambda *a: None)
     assert hid["days"] == [] and hid["boat_count"] == 0
     assert (tmp_path / "_hid" / "days" / f"{day}.html").exists()
+    assert hid["other_count"] == 1 and day in (tmp_path / "_hid" / "other.html").read_text()   # listed on Other races
 
 
 def test_averages_leave_out_manoeuvres():
