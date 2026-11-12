@@ -335,7 +335,7 @@ def _course_chains(log: VkxLog, hz: float = 1.0, guns=None):
                     reach_m.append(o["d"])
                     if o["ok"]:
                         offsets.append({"kind": "offset", "lat": o["lat"], "lon": o["lon"], "t": int(grid[o["k"]]),
-                                        "leg": li, "d": o["d"]})
+                                        "leg": li, "d": o["d"], "turn": o["turn"]})
             if L is not c[-1]:
                 mk = {"kind": "windward" if L[0] == 1 else "leeward",
                       "lat": float(s.lat[j]), "lon": float(s.lon[j]), "t": int(grid[j]), "leg": li}
@@ -382,7 +382,8 @@ def _offset_after(s, j, hz, twa):
     cs = s.cog[k2]
     if np.isfinite(cs):                                   # left to port, like the windward mark
         lat, lon = _offset(lat, lon, float(cs) - 90.0, MARK_INSIDE_M)
-    return {"lat": lat, "lon": lon, "k": k2, "d": float(d), "ok": bool(ok)}
+    return {"lat": lat, "lon": lon, "k": k2, "d": float(d), "ok": bool(ok),
+            "turn": (float(s.lat[k1]), float(s.lon[k1]))}           # where it turned off the beat: the windward mark
 
 
 # A day has windward offsets when the boats typically reach this far from the windward mark before
@@ -640,6 +641,41 @@ def _made_ground_upwind(boats, t0, t1, twd) -> float:
     return best
 
 
+def _windward_from_offsets(races):
+    """The offset is laid a set distance and bearing from the windward mark (relative to the wind),
+    so it is the same all day. The offset is placed well (where boats bear away) but the windward
+    mark from the sailing is rough (the boats' highest point), so take the typical windward-mark-to-
+    offset step for the day, measured from where each boat turned off the beat to where it bore
+    away, and put each windward mark that step back from its offset."""
+    steps = []
+    for r in races:
+        tw = math.radians(r.get("twd") or 0.0)
+        for o in (m for m in r["marks"] if m["kind"] == "offset"):
+            for la, lo in o.get("turns", []):
+                ml = 111_320.0 * math.cos(math.radians(la))
+                dx, dy = (o["lon"] - lo) * ml, (o["lat"] - la) * 111_320.0
+                # into the wind's frame: along = towards the wind, across = to its right looking upwind
+                steps.append((dx * math.sin(tw) + dy * math.cos(tw), dx * math.cos(tw) - dy * math.sin(tw)))
+    if len(steps) < 2:
+        return
+    along, across = float(np.median([a for a, _ in steps])), float(np.median([c for _, c in steps]))
+    for r in races:
+        tw = math.radians(r.get("twd") or 0.0)
+        dx = along * math.sin(tw) + across * math.cos(tw)
+        dy = along * math.cos(tw) - across * math.sin(tw)
+        offs = {m.get("leg"): m for m in r["marks"] if m["kind"] == "offset"}
+        for w in (m for m in r["marks"] if m["kind"] == "windward"):
+            o = offs.get(w.get("leg"))
+            if o is None:
+                continue
+            ml = 111_320.0 * math.cos(math.radians(o["lat"]))
+            w["lat"], w["lon"] = o["lat"] - dy / 111_320.0, o["lon"] - dx / ml
+            w["from_offset"] = True
+        for o in offs.values():
+            o.pop("turns", None)
+        r["offset_step_m"] = [round(along), round(across)]
+
+
 def _fill_offsets(races):
     """On a course with an offset every windward rounding has one, but a boat can bear away early or
     a log can miss it. Put the missing ones where the others sit from their windward mark (the
@@ -721,7 +757,8 @@ def _course_races(boats, guns=None) -> list[dict]:
                 continue
             marks.append({"kind": "offset", "lat": float(np.mean([q["lat"] for q in pts])),
                           "lon": float(np.mean([q["lon"] for q in pts])), "boats": len(pts),
-                          "t": int(max(q["t"] for q in pts)), "leg": leg})
+                          "t": int(max(q["t"] for q in pts)), "leg": leg,
+                          "turns": [q["turn"] for q in pts if q.get("turn")]})
         r["marks"] = marks
         if r["marks"]:
             r["_fin0"] = dict(r["finish"])
@@ -734,6 +771,7 @@ def _course_races(boats, guns=None) -> list[dict]:
                     r["finish"][n] = r["_fin0"][n]
     if day_has_offsets:
         _fill_offsets(races)
+        _windward_from_offsets(races)
     races.sort(key=lambda r: r["start_ms"])
     _share_committee(races, boats)
     for r in races:
