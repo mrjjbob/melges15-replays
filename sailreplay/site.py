@@ -245,7 +245,9 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
             if letter and k < len(d["races"]):
                 d["races"][k]["meta"]["course_letter"] = letter
                 d["day"]["races"][k]["course_letter"] = letter
-        d["day"]["home"] = "../index.html"
+        off_season = not entry["series"] or day in set(site_cfg.get("hidden_days") or [])
+        d["day"]["home"] = "../other.html" if off_season else "../index.html"
+        d["day"]["home_label"] = "← Other races" if off_season else "← All days"
         d["day"]["series"] = entry["series"]
         replay.write_html(d, out / "days" / f"{day}.html")
         rs = d["day"]["races"]
@@ -307,8 +309,11 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
     # the fleet's upload page and email (see uploader/), or else GitHub's own upload page
     upload_url = site_cfg.get("upload_url") or (f"https://github.com/{repo}/upload/{branch}/logs" if repo else None)
     # days left off the home page ("hidden_days" in site.json); their replay pages are still built
+    # The home page is the season: days in a series. Everything else (practice, test sessions, racing
+    # outside the season, and dates in "hidden_days") goes on other.html, linked only from the footer.
     hidden_days = set(site_cfg.get("hidden_days") or [])
-    home_days = [d for d in days if d["date"] not in hidden_days]
+    home_days = [d for d in days if d.get("series") and d["date"] not in hidden_days]
+    other_days = [d for d in days if d not in home_days]
     manifest = {
         "title": site_cfg.get("title", "Race Replays"),
         "club": site_cfg.get("club", ""),
@@ -318,6 +323,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         "upload_email": site_cfg.get("upload_email"),
         "days": home_days, "problems": problems,
         "boat_count": len({b for d in home_days for b in d["boats"]}),
+        "other_count": len(other_days),
         "series": [{"name": x["name"], "start": x.get("start"), "end": x.get("end")} for x in series_cfg],
         "links": site_cfg.get("links") or [],
         "results_note": site_cfg.get("results_note", "A day not yet on the club's scoring sheet is scored from the uploaded Atlas data, so it may change when the sheet is added."),
@@ -330,6 +336,16 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
     (out / "index.html").write_text(
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        '<style>[hidden]{display:none!important}body{margin:0}</style>\n</head>\n<body>\n'
+        + page + "\n</body>\n</html>\n", encoding="utf-8")
+    other = dict(manifest, archive=True, days=other_days, other_count=0,
+                 boat_count=len({b for d in other_days for b in d["boats"]}))
+    page = INDEX_TEMPLATE.read_text(encoding="utf-8").replace("__TITLE__", html.escape(manifest["title"] + " · other races"))
+    page = page.replace("__SITE_JSON__", json.dumps(other, separators=(",", ":")).replace("</", "<\\/"))
+    (out / "other.html").write_text(
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        '<meta name="robots" content="noindex">\n'
         '<style>[hidden]{display:none!important}body{margin:0}</style>\n</head>\n<body>\n'
         + page + "\n</body>\n</html>\n", encoding="utf-8")
     res = {"title": manifest["title"], "club": manifest["club"], "note": manifest["results_note"], "links": manifest["links"],

@@ -63,7 +63,7 @@ Each day page has an **Advanced** tab that lays every race over each other, with
 - **Courses:** each race is labelled from its legs: W (windward–leeward–finish), W2 (twice around), L (windward–finish) or Z (finish downwind). A modified gold cup (M) reads as W2, because its wing-mark reach looks like a run sailed with one gybe. Set it from the committee's board under `courses` if it's used.
 - **Labels** name a day that isn't part of a series. It shows by that name instead of its date and isn't scored.
 - **Official results:** put the club's scoring workbook (`.xlsx`) in `results/`. Each Melges 15 table in it (a date, a `MELGES 15` row with race numbers and TOTAL, one row per boat, then an optional weather line) replaces the preliminary scores for that day, and the results page marks the day Official. Boats are matched by sail number. A sheet dated up to three days after a racing day is used for that day. Add the updated workbook each week, under the same name to replace it.
-- **Hidden days:** dates in `hidden_days` are left off the home page. Their replay pages are still built at `days/<date>.html`, so a direct link keeps working.
+- **Other races:** the home page lists only days in a series. Everything else (practice, test sessions, racing outside the season) is on `other.html`, linked from the home page footer as "Other races". Dates in `hidden_days` are moved there too, even inside a series. Their replay pages are built the same way.
 - `title`, `club`, `timezone` and the `links` at the top of the home page are set here too.
 
 ### Recalls and penalty turns
