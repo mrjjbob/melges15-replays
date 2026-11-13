@@ -171,8 +171,15 @@ def _resample(b: BoatSeries, grid_ms: np.ndarray, heel_offset: float, max_gap_ms
     b.lat = np.interp(g, tf, col("lat"))
     b.lon = np.interp(g, tf, col("lon"))
     b.sog = np.interp(g, tf, col("sog_kt"))
-    b.cog = np.interp(g, tf, np.unwrap(np.radians(col("cog")))) * 180 / np.pi % 360
-    b.hdg = np.interp(g, tf, np.unwrap(np.radians(col("heading")))) * 180 / np.pi % 360
+    def ang(k):
+        # unwrap and interpolate over the readings that exist (np.unwrap turns everything after a NaN to NaN)
+        v = col(k)
+        ok = np.isfinite(v)
+        if ok.sum() < 2:
+            return np.full(out_n, np.nan)
+        return np.interp(g, tf[ok], np.unwrap(np.radians(v[ok]))) * 180 / np.pi % 360
+    b.cog = ang("cog")
+    b.hdg = ang("heading")
     b.heel = np.interp(g, tf, col("heel")) - heel_offset
     b.pitch = np.interp(g, tf, col("pitch"))
     for k in ("lat", "lon", "sog", "cog", "hdg", "heel", "pitch"):
@@ -1182,6 +1189,10 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     colors = colors or {}
     logs = [l for _, l in boats]
     notes: list[str] = []
+    for nm, lg in boats:
+        if getattr(lg, "device", None) == "watch":
+            notes.append(f"{nm} is from a Garmin watch: a position every few seconds joined up in straight lines, "
+                         "and no compass or heel, so its tacks look rounder and it is left out of heel and helm charts.")
     series = [BoatSeries(name, colors.get(name, PALETTE[i % len(PALETTE)]), log) for i, (name, log) in enumerate(boats)]
     series = [s for s in series if s.log.track]
     if not series:
@@ -2290,6 +2301,8 @@ def _drop_sail_in_beat(r, logs, area):
             continue
         out = _exit_time(log, area, t0, t0 + 20 * 60_000)
         if out is None:
+            if log.end_ms is not None and log.end_ms < t0 + 20 * 60_000:
+                continue                              # its log stops first (a watch stopped after the finish): no say
             return                                    # someone stayed out there: a real beat
         twa = [wrap180(q["cog"] - twd) for q in log.track if t0 + 20_000 <= q["t"] <= out and q["sog_kt"] > 2]
         up = [a for a in twa if abs(a) < 75]

@@ -16,6 +16,10 @@ You need a free GitHub account. If you are not a collaborator yet, GitHub offers
 
 **No GitHub account?** The fleet uploader in [`uploader/`](uploader) lets sailors email their file straight from the Vakaros Connect share button, or use a simple upload page. See its README to set it up.
 
+## Garmin watch files
+
+A Garmin watch's **Sail Race** activity (`.fit`, from Garmin Connect: Export Original) works too. Put the sail number in the name, like `900_Hafen__Garmin_23817197631.fit`, and add one file per race; files from the same boat on the same day are joined. A watch records a position only every few seconds (about 4 s on a Fenix 7) and has no compass or heel, so its positions are joined up in straight lines (across gaps up to 15 s), its tacks look rounder, and it is left out of the heel and helm charts. The Sail Race countdown is a lap of its own, so the gun is read from where the next lap starts. Heart rate is kept but not shown yet. Needs `pip install fitdecode`.
+
 ## The fleet
 
 `fleet.json` lists the Melges 15 fleet by sail number, as the club scores it (Frostbite SI 13.6). It starts with the boats from the 2025–26 results. Uploads are matched to a boat by, in order:
