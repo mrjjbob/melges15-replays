@@ -392,10 +392,14 @@ const VMG_REF = (() => {
   return { up: avg("up_vmg"), down: avg("dn_vmg") };
 })();
 const HAS_VMG = VMG_REF.up != null && boats.some(b => b.track.vmg);
-const TRAIL_MODES = [["pace", "Pace width"], ["vmg", "VMG width"], ["plain", "Plain trail"]].filter(([k]) => (k !== "pace" || HAS_PACE) && (k !== "vmg" || HAS_VMG));
+// width modes thicken the trail with pace or VMG; colour modes paint it red when up to speed, blue when down, grey in between
+const TRAIL_MODES = [["pace", "Pace width"], ["pacec", "Pace colour"], ["vmg", "VMG width"], ["vmgc", "VMG colour"], ["plain", "Plain trail"]]
+  .filter(([k]) => (!k.startsWith("pace") || HAS_PACE) && (!k.startsWith("vmg") || HAS_VMG));
+const trailBase = () => state.trailMode.startsWith("vmg") ? "vmg" : state.trailMode.startsWith("pace") ? "pace" : "plain";
+const trailColour = () => state.trailMode.endsWith("c");
 if (!TRAIL_MODES.some(m => m[0] === SESSION.trailMode)) SESSION.trailMode = TRAIL_MODES[0][0];
 function trailPct(b, i) {
-  if (state.trailMode === "pace") return b.track.pace ? b.track.pace[i] : null;
+  if (trailBase() === "pace") return b.track.pace ? b.track.pace[i] : null;
   const md = b.track.mode[i], v = b.track.vmg[i], ref = md === "up" ? VMG_REF.up : md === "down" ? VMG_REF.down : null;
   if (v == null || !ref || (GUN != null && raceT(i) < 0)) return null;
   return 100 * v / ref;
@@ -509,14 +513,15 @@ function draw() {
   // trails: width shows pace (% of target speed for the race's average wind) when it is known
   for (const b of boats) {
     const a = state.trail === Infinity ? 0 : Math.max(0, ii - Math.round(state.trail * HZ));
-    if (state.trailMode !== "plain" && (state.trailMode === "vmg" ? b.track.vmg : b.track.pace)) {
+    if (trailBase() !== "plain" && (trailBase() === "vmg" ? b.track.vmg : b.track.pace)) {
       ctx.strokeStyle = col(b); ctx.lineCap = "round";
-      const step = state.trail === Infinity || state.trail > 600 ? 2 : 1;
+      const step = state.trail === Infinity || state.trail > 600 ? 2 : 1, colour = trailColour();
       for (let i = a + step; i <= ii; i += step) {
         if (!b.ok[i] || !b.ok[i - step]) continue;
         const pc = trailPct(b, i);
         ctx.globalAlpha = (done(b) ? 0.5 : 1) * (0.3 + 0.7 * (i - a) / Math.max(1, ii - a));
-        ctx.lineWidth = paceWidth(pc);
+        if (colour) { ctx.strokeStyle = done(b) ? FIN_GREY : speedColour(pc); ctx.lineWidth = 3.2; }
+        else ctx.lineWidth = paceWidth(pc);
         ctx.beginPath(); ctx.moveTo(sx(b.x[i - step]), sy(b.y[i - step])); ctx.lineTo(sx(b.x[i]), sy(b.y[i])); ctx.stroke();
       }
       ctx.lineCap = "butt";
@@ -529,7 +534,7 @@ function draw() {
     }
     ctx.globalAlpha = 1;
   }
-  if (state.trailMode !== "plain") paceLegend();
+  if (trailBase() !== "plain") paceLegend();
   // boats
   boats.forEach((b, k) => {
     const p = at(b, state.i); if (!p) return;
@@ -547,17 +552,25 @@ const FIN_GREY = "#5d7280";
 const penAt = (b, fi) => { const t = fi / HZ; return (b.penalties || []).find(p => t >= p.t0 && t <= p.t1) || null; };
 // being over the line at the gun is not shown as a penalty: only turning back to restart is
 const PEN_TAG = { recall: "OCS · going back", turns: "Penalty turn", mark: "Mark turn" };
+// up to speed red, down blue, grey within SPEED_BAND of 100%; full colour SPEED_FULL past the band
+const SPEED_BAND = 5, SPEED_FULL = 15, SPEED_UP = [232, 72, 77], SPEED_DOWN = [56, 139, 253], SPEED_MID = [134, 150, 160];
+function speedColour(pc) {
+  if (pc == null || !isFinite(pc)) return `rgb(${SPEED_MID.join(",")})`;
+  const d = pc - 100, f = Math.min(1, Math.max(0, (Math.abs(d) - SPEED_BAND) / SPEED_FULL)), to = d > 0 ? SPEED_UP : SPEED_DOWN;
+  return `rgb(${SPEED_MID.map((m, k) => Math.round(m + (to[k] - m) * f)).join(",")})`;
+}
 function paceWidth(pc) { return pc == null ? 1.5 : Math.max(1, Math.min(6.5, 1 + (pc - 60) * 0.049)); }
 function paceLegend() {
   const x = 18, y = H - 128;
   ctx.font = "600 11px " + cssv("--f-display"); ctx.fillStyle = C.muted; ctx.textAlign = "left";
-  const vm = state.trailMode === "vmg";
-  ctx.fillText(vm ? "TRAIL WIDTH = VMG" : "TRAIL WIDTH = PACE", x, y);
+  const vm = trailBase() === "vmg", colour = trailColour();
+  ctx.fillText((colour ? "TRAIL COLOUR = " : "TRAIL WIDTH = ") + (vm ? "VMG" : "PACE"), x, y);
   ctx.font = "500 11px " + cssv("--f-data");
   ctx.fillText(vm ? `% of avg (${fmtNum(VMG_REF.up, 1)} up, ${fmtNum(VMG_REF.down, 1)} down kt)` : GUN != null && raceT(state.i) < 0 ? `% of upwind target, ${R.sides ? R.sides.tws_ref : "?"} kt` : `% of target in ${R.sides ? R.sides.tws_ref : "?"} kt`, x, y + 14);
-  [[80, "80%"], [100, "100%"], [150, "150%"]].forEach(([pc, t], k) => {
+  const rows = colour ? [[115, "up to speed (115%+)"], [100, "on it (95–105%)"], [85, "down (85% or less)"]] : [[80, "80%"], [100, "100%"], [150, "150%"]];
+  rows.forEach(([pc, t], k) => {
     const yy = y + 32 + k * 15;
-    ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = paceWidth(pc);
+    ctx.strokeStyle = colour ? speedColour(pc) : C.ink; ctx.globalAlpha = 0.85; ctx.lineCap = "round"; ctx.lineWidth = colour ? 3.2 : paceWidth(pc);
     ctx.beginPath(); ctx.moveTo(x, yy - 4); ctx.lineTo(x + 34, yy - 4); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineCap = "butt";
     ctx.fillStyle = C.muted; ctx.fillText(t, x + 44, yy);
   });
@@ -771,7 +784,8 @@ function refresh() {
 $("trail").onclick = () => { const k = TRAILS.findIndex(t => t[0] === state.trail); const t = TRAILS[(k + 1) % TRAILS.length]; state.trail = SESSION.trail = t[0]; $("trail").textContent = t[1]; draw(); };
 { const t = TRAILS.find(t => t[0] === state.trail); if (t) $("trail").textContent = t[1]; }
 $("fit").onclick = () => { state.follow = null; state.userMoved = false; fitAll(); refresh(); };
-function showTrailMode() { const m = TRAIL_MODES.find(m => m[0] === state.trailMode) || ["plain", "Plain trail"]; $("paceBtn").textContent = m[1]; $("paceBtn").setAttribute("aria-pressed", String(m[0] !== "plain")); }
+function showTrailMode() { const m = TRAIL_MODES.find(m => m[0] === state.trailMode) || ["plain", "Plain trail"]; $("paceBtn").textContent = m[1]; $("paceBtn").setAttribute("aria-pressed", String(m[0] !== "plain"));
+  $("paceBtn").title = "Trail: " + TRAIL_MODES.map(m => m[1]).join(" → ") + " (click to step through)"; }
 $("paceBtn").hidden = TRAIL_MODES.length < 2;
 showTrailMode();
 $("paceBtn").onclick = () => { const j = TRAIL_MODES.findIndex(m => m[0] === state.trailMode); state.trailMode = SESSION.trailMode = TRAIL_MODES[(j + 1) % TRAIL_MODES.length][0]; showTrailMode(); draw(); };
