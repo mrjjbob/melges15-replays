@@ -1091,7 +1091,7 @@ function advPrep(k) {
   const bs = R_.boats.map(b => {
     const t = b.track, lat = num(t.lat), lon = num(t.lon), n = lat.length, x = new Float64Array(n), y = new Float64Array(n);
     for (let i = 0; i < n; i++) { x[i] = (lon[i] - lo0) * mlon; y[i] = (lat[i] - la0) * 111320; }
-    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), cog: num(t.cog), hdg: num(t.hdg), heel: num(t.heel), st: t.steady || "", pos: b.summary.position };
+    return { name: b.name, color: b.color, b, n, x, y, sog: num(t.sog), vmg: num(t.vmg), twa: num(t.twa), cog: num(t.cog), hdg: num(t.hdg), heel: num(t.heel), st: t.steady || "", pos: b.summary.position, watch: b.device === "watch" };
   });
   return (cache[k] = { k, R: R_, M: M_, hz, twdAt, xy, boats: bs, gunI: M_.gun_s != null ? Math.round(M_.gun_s * M_.hz) : null, nb: bs.length });
 }
@@ -1107,14 +1107,24 @@ function advWindow(events, t0, t1, keys) {
   const acc = new Map();
   for (const { P, B, i0 } of events) {
     let a = acc.get(B.name);
-    if (!a) { a = { name: B.name, color: B.color, n: 0, sum: {}, cnt: {} }; for (const k of keys) { a.sum[k] = new Float64Array(T.length); a.cnt[k] = new Float64Array(T.length); } acc.set(B.name, a); }
+    if (!a) { a = { name: B.name, color: B.color, watch: B.watch, n: 0, sum: {}, cnt: {} }; for (const k of keys) { a.sum[k] = new Float64Array(T.length); a.cnt[k] = new Float64Array(T.length); } acc.set(B.name, a); }
     a.n++;
     T.forEach((s, j) => { const i = i0 + Math.round(s * P.hz); if (i < 0 || i >= B.n) return;
       for (const k of keys) { let v = B[k][i]; if (k === "twa") v = Math.abs(v); if (isFinite(v)) { a.sum[k][j] += v; a.cnt[k][j]++; } } });
   }
-  const out = [...acc.values()].map(a => { const o = { name: a.name, color: a.color, n: a.n }; for (const k of keys) o[k] = T.map((_, j) => a.cnt[k][j] >= Math.max(1, a.n * 0.5) ? a.sum[k][j] / a.cnt[k][j] : NaN); return o; });
+  const out = [...acc.values()].map(a => { const o = { name: a.name, color: a.color, watch: a.watch, n: a.n }; for (const k of keys) o[k] = T.map((_, j) => a.cnt[k][j] >= Math.max(1, a.n * 0.5) ? a.sum[k][j] / a.cnt[k][j] : NaN); return o; });
   return { T, series: out };
 }
+// A boat logged by a watch (a position every few seconds, joined up in straight lines) is drawn
+// faint and dashed: its turns are smoothed by the gaps, not by how it was sailed
+const WATCH_ALPHA = 0.45;
+function watchStyle(c, on) { if (on) { c.setLineDash([5, 4]); c.globalAlpha = WATCH_ALPHA; } else { c.setLineDash([]); c.globalAlpha = 1; } }
+function advWatchNote(c, w, h, any) {
+  if (!any) return;
+  c.save(); c.font = "500 10.5px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "right";
+  c.fillText("dashed: watch data, a position every ~4 s", w - 10, 12); c.restore();
+}
+const advWatchBoats = () => { const s = new Set(); RACES.forEach(r => r.boats.forEach(b => { if (b.device === "watch") s.add(b.name); })); return s; };
 function advLines(id, T, series, key, yl, note) {
   const [cv, c, w, h] = chartCanvas(id);
   const vals = series.flatMap(s => s[key]).filter(isFinite);
@@ -1122,8 +1132,9 @@ function advLines(id, T, series, key, yl, note) {
   let y0 = Math.min(...vals), y1 = Math.max(...vals); const pad = Math.max(0.2, (y1 - y0) * 0.08); y0 -= pad; y1 += pad;
   const [X, Y, L, B, Tp] = axes(c, w, h, T[0], T[T.length - 1], y0, y1, "s from " + (note || "event"), yl);
   c.strokeStyle = "rgba(242,179,61,.55)"; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(0), Tp); c.lineTo(X(0), h - B); c.stroke(); c.setLineDash([]);
-  for (const s of series) { c.strokeStyle = s.color; c.lineWidth = 2; c.beginPath(); let on = false;
-    s[key].forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(T[j]), Y(v)); else { c.moveTo(X(T[j]), Y(v)); on = true; } }); c.stroke(); }
+  for (const s of series) { c.strokeStyle = s.color; c.lineWidth = 2; watchStyle(c, s.watch); c.beginPath(); let on = false;
+    s[key].forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(T[j]), Y(v)); else { c.moveTo(X(T[j]), Y(v)); on = true; } }); c.stroke(); watchStyle(c, false); }
+  advWatchNote(c, w, h, series.some(s => s.watch));
 }
 // tracks overlaid in a frame of their own: metres, wind (or the course side) up
 function advOverlay(id, paths, opt = {}) {
@@ -1151,8 +1162,11 @@ function advOverlay(id, paths, opt = {}) {
     if (p.gold) { c.save(); c.strokeStyle = GOLD; c.globalAlpha = 0.45; c.lineWidth = 4; c.shadowColor = GOLD; c.shadowBlur = 3; c.beginPath(); let o2 = false;
       p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { o2 = false; return; } if (o2) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); o2 = true; } }); c.stroke(); c.restore(); c.lineWidth = 1.8; }
     else c.lineWidth = 1.6;
-    c.strokeStyle = p.color; c.globalAlpha = p.gold ? 1 : (p.alpha ?? 0.8); c.beginPath(); let on = false;
+    c.strokeStyle = p.color; c.globalAlpha = p.gold ? 1 : (p.alpha ?? 0.8) * (p.watch ? WATCH_ALPHA / 0.8 : 1);
+    if (p.watch) c.setLineDash([5, 4]);
+    c.beginPath(); let on = false;
     p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { on = false; return; } if (on) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); on = true; } }); c.stroke();
+    c.setLineDash([]);
     if (p.glyph === false) continue;
     const g = p.glyph ?? p.pts.length - 1, a = p.pts[Math.max(0, g - 2)], b = p.pts[g];
     if (b && a && isFinite(b[0]) && isFinite(a[0])) {
@@ -1165,10 +1179,14 @@ function advOverlay(id, paths, opt = {}) {
   if (opt.over) opt.over(c, sx, sy, sc);
   c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "left";
   c.fillText(`grid ${step} m · ${opt.up || "wind"} up`, 10, h - 10);
+  if (paths.some(p => p.watch) && !opt.noWatchNote) { c.textAlign = "left"; c.fillText("dashed: watch data, a position every ~4 s", 10, h - 42); }
 }
 function advLegend(byPlace) {
   if (byPlace) return `<span><i style="background:${placeColour(1, 5)}"></i>Won the race</span><span><i style="background:${placeColour(3, 5)}"></i>Middle</span><span><i style="background:${placeColour(5, 5)}"></i>Last</span>`;
-  return advBoats().filter(b => !ADV.off.has(b.name)).map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("");
+  const wb = advWatchBoats();
+  return advBoats().filter(b => !ADV.off.has(b.name)).map(b => wb.has(b.name)
+    ? `<span title="Garmin watch: a position every few seconds"><i style="background:repeating-linear-gradient(90deg, ${b.color} 0 4px, transparent 4px 7px);opacity:${WATCH_ALPHA}"></i>${esc(b.name)} (watch)</span>`
+    : `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("");
 }
 // ---------- rate of turn through tacks and gybes, from the compass heading
 const BOAT_LEN_M = 4.57;                 // Melges 15 hull length
@@ -1301,7 +1319,7 @@ function renderAdvanced() {
   const el = $("advanced");
   const pick = advRaces(), allB = advBoats(), byPlace = ADV.colour === "place";
   const chip = (attr, val, on, label, dot) => `<button class="chip" ${attr}="${esc(val)}" aria-pressed="${on}">${dot ? `<i style="background:${dot}"></i>` : ""}${esc(label)}</button>`;
-  let h = `<div><h2>Advanced</h2><p class="note">Every race ${DAY && DAY.days ? "of the regatta, all " + DAY.days.length + " days," : "of the day"} laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.</p>
+  let h = `<div><h2>Advanced</h2><p class="note">Every race ${DAY && DAY.days ? "of the regatta, all " + DAY.days.length + " days," : "of the day"} laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.${advWatchBoats().size ? ` <b>Dashed, faint lines are watch data</b> (${[...advWatchBoats()].map(esc).join(", ")}): a Garmin watch saves a position only every few seconds (about 4 s), joined up in straight lines here, so its tacks, gybes and roundings look smoother and rounder than they were sailed, and it has no compass or heel for those charts. Its times, speeds and VMG over a leg are fine.` : ""}</p>
   <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => (DAY && DAY.days && (k === 0 || r.meta.day_idx !== RACES[k - 1].meta.day_idx) ? `<span class="dk">${esc((DAY.days[r.meta.day_idx] || {}).label || "")}</span>` : "") + chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
   ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
   <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}</div></div>`;
@@ -1382,7 +1400,7 @@ function drawAdvanced() {
     }
     for (const B of P.boats) { if (ADV.off.has(B.name)) continue;
       const pts = advPathAround(P, B, P.gunI, -60, 30, O[0], O[1], deg, false, true);
-      if (pts.some(q => isFinite(q[0]))) sp.push({ color: col(P, B), pts }); }
+      if (pts.some(q => isFinite(q[0]))) sp.push({ color: col(P, B), pts, watch: B.watch }); }
   }
   ADVS = { paths: sp, lines };
   advStartUi(); drawStarts();
@@ -1434,9 +1452,10 @@ function drawAdvanced() {
       const end = pts[pts.length - 1];
       // distance made towards (tack) or away from (gybe) the wind by the end of the window
       const gain = end && isFinite(end[1]) ? (kind === "tack" ? end[1] : -end[1]) : null;
-      return { color: col(P, B), alpha: 0.7, pts, gain, who: B.name, race: P.k + 1 };
+      return { color: col(P, B), alpha: 0.7, pts, gain, who: B.name, race: P.k + 1, watch: B.watch };
     });
-    let best = null; for (const q of paths) if (q.gain != null && (!best || q.gain > best.gain)) best = q;
+    // a watch's straight lines between fixes cut corners, so it can't be the best one
+    let best = null; for (const q of paths) if (q.gain != null && !q.watch && (!best || q.gain > best.gain)) best = q;
     if (best) { best.gold = true; paths.splice(paths.indexOf(best), 1); paths.push(best); }
     advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
       over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill();
@@ -1475,9 +1494,9 @@ function drawAdvanced() {
     if (sh) for (const q of pts) { q[0] += sh[0]; q[1] += sh[1]; }
     if (e.pinned && e.wmark && !wmarks.some(w => w.k === P.k && Math.hypot(w.src[0] - e.wmark[0], w.src[1] - e.wmark[1]) < 0.5)) {
       wmarks.push({ k: P.k, src: e.wmark, xy: rotTo(e.wmark[0] - mark[0], e.wmark[1] - mark[1], twdOf(e)) }); }
-    return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1 };
+    return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1, watch: B.watch };
   });
-  let rBest = null; for (const q of rPaths) if (q.gain != null && (!rBest || q.gain > rBest.gain)) rBest = q;
+  let rBest = null; for (const q of rPaths) if (q.gain != null && !q.watch && (!rBest || q.gain > rBest.gain)) rBest = q;
   if (rBest) { rBest.gold = true; rPaths.splice(rPaths.indexOf(rBest), 1); rPaths.push(rBest); }
   const centres = gateOn ? Object.values(G) : [[0, 0]];
   const pinOff = rd.some(e => e.pinned);
@@ -1609,8 +1628,8 @@ function drawStarts() {
   if (!ADVS || !$("advStarts")) return;
   const t = ADV.startT, j = Math.round((t + 60) * 2), j0 = Math.max(0, j - 40);
   const paths = [];
-  for (const p of ADVS.paths) paths.push({ color: p.color, pts: p.pts, alpha: 0.13, glyph: false });
-  for (const p of ADVS.paths) { const seg = p.pts.slice(j0, j + 1); if (seg.length && isFinite(seg[seg.length - 1][0])) paths.push({ color: p.color, pts: seg, alpha: 0.95 }); }
+  for (const p of ADVS.paths) paths.push({ color: p.color, pts: p.pts, alpha: 0.13, glyph: false, watch: p.watch });
+  for (const p of ADVS.paths) { const seg = p.pts.slice(j0, j + 1); if (seg.length && isFinite(seg[seg.length - 1][0])) paths.push({ color: p.color, pts: seg, alpha: 0.95, watch: p.watch }); }
   const lines = ADVS.lines;
   advOverlay("advStarts", paths, { up: ADV.startOrient === "wind" ? "wind" : "course", extent: lines.flat(), empty: "No starts in the races picked.",
     under: (c, sx, sy) => { c.setLineDash([5, 5]); c.strokeStyle = t >= 0 ? "rgba(242,179,61,.85)" : "rgba(242,179,61,.5)"; c.lineWidth = t >= 0 ? 1.6 : 1.2;
