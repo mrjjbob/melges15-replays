@@ -1,6 +1,6 @@
 # Fleet uploader (no GitHub account needed)
 
-Sailors get their `.vkx` files onto the site in either of two ways:
+Sailors get their `.vkx` files (Vakaros) or `.fit` files (GPS watch) onto the site in either of two ways:
 
 - **Email**, straight from the Vakaros Connect share button: Share → Mail → send to the fleet address, with the sail number in the subject. New mail is checked every 5 minutes, the file is added to `logs/`, and the sender gets a reply.
 - **Upload page**: a simple web page where they pick their boat and the file.
@@ -51,7 +51,15 @@ Both run as a small Google Apps Script on a Gmail account set up for the fleet. 
 
 The sail number from the subject line (email) or the boat picked on the page is put at the front of the file name, for example `302_Rubel__Bob_s_Vakaros_11-8-2026.vkx`, and the site matches boats by sail number. Without a sail number the file keeps the name Vakaros gave it, which usually carries the owner's name and is matched by surname.
 
-A file that is already there is not added twice. Anything that is not a `.vkx` file is turned away.
+A file that is already there is not added twice. Anything that is not a `.vkx`, `.fit` or `.zip` file is turned away.
+
+**GPS watches.** A `.fit` file (or the `.zip` Garmin Connect's **Export File** saves, whose `.fit` files are taken out and added) is named by Garmin, for example `25046482066_ACTIVITY.fit`, and says nothing about the boat. So a watch file is only accepted with a sail number in the subject or a boat picked on the page, and is saved as `900_Hafen__25046482066_ACTIVITY.fit`. One file per race is fine: the site joins a boat's files for the day.
+
+**Phone recordings.** A `.zip` with `.csv` files in it and no `.fit` (the "zipped CSV" export of the Sensor Logger app) is kept in `incoming/phone/`, named by sail number, and the sender is told it isn't on the site yet. The upload page asks for a few so phone support can be added and checked against real recordings.
+
+## Updating the script
+
+The script runs from the copy pasted into script.google.com, not from this folder. After `Code.gs` or `Upload.html` changes here, paste both into the editor again, save, then **Deploy → Manage deployments → ✎ (edit) → Version: New version → Deploy**. The web app URL stays the same.
 
 ## If something goes wrong
 

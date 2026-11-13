@@ -521,3 +521,107 @@ def test_late_unsynced_timer_does_not_make_a_second_race():
                                   {"t": G + 40_000, "event": "race_start", "value_s": 0}])
     assert analysis.find_guns([synced, late]) == [G]
     assert analysis.find_guns([late]) == [G + 40_000]
+
+
+# --------------------------------------------------------------------------- GPS watches (.fit)
+WATCH_FIT = Path(__file__).parent / "data" / "garmin_quatix7_20261108_race1.fit"
+
+
+def test_fit_watch_log():
+    from sailreplay import fit
+    log = vkx.parse_file(WATCH_FIT)
+    assert log.device == "watch" and log.device_name == "Garmin watch"
+    assert len(log.track) == 251
+    # fixes are moved 1.75 s earlier for the watch's lag; the timer is not
+    assert log.track[0]["t"] == 1794159787000 - fit.WATCH_LAG_MS
+    assert [(e["event"], e["t"], e["value_s"]) for e in log.timer] == [
+        ("start", 1794159787000, 120), ("race_start", 1794159907000, 0)]
+    r = log.track[100]
+    assert math.isnan(r["heel"]) and math.isnan(r["pitch"]) and r["heading"] == r["cog"]
+    assert 40.8 < r["lat"] < 41.0 and -73.5 < r["lon"] < -73.3 and 0 <= r["sog_kt"] < 20
+    assert analysis.find_guns([log]) == [1794159907000]
+
+
+def test_fit_from_garmin_zip(tmp_path):
+    import zipfile
+    z = tmp_path / "25046482066.zip"
+    with zipfile.ZipFile(z, "w") as f:
+        f.write(WATCH_FIT, "25046482066_ACTIVITY.fit")
+    assert len(vkx.parse_file(z).track) == 251
+    bad = tmp_path / "x.fit"
+    bad.write_bytes(b"not a fit file at all")
+    with pytest.raises(ValueError):
+        vkx.parse_file(bad)
+
+
+def test_watch_timer_only_counts_when_no_atlas_timed_the_start():
+    from types import SimpleNamespace
+    G = 1_800_000_000_000
+    atlas = SimpleNamespace(device="atlas", timer=[{"t": G - 120_000, "event": "start", "value_s": 120},
+                                                   {"t": G, "event": "race_start", "value_s": 0}])
+    # a watch started a minute late, plus a later race only the watch timed
+    watch = SimpleNamespace(device="watch", timer=[{"t": G - 60_000, "event": "start", "value_s": 120},
+                                                   {"t": G + 60_000, "event": "race_start", "value_s": 0},
+                                                   {"t": G + 900_000, "event": "start", "value_s": 120},
+                                                   {"t": G + 1_020_000, "event": "race_start", "value_s": 0}])
+    assert analysis.find_guns([atlas, watch]) == [G, G + 1_020_000]
+
+
+def _as_watch(log, every_s=3, lag_ms=0):
+    """An Atlas log thinned to a fix every few seconds, with no heel: what a watch records."""
+    w = vkx.VkxLog(source=log.source, log_rate_hz=1, device="watch", device_name="GPS watch")
+    last = None
+    for r in log.track:
+        if last is None or r["t"] - last >= every_s * 1000:
+            w.track.append(dict(r, t=r["t"] + lag_ms, heading=r["cog"], heel=float("nan"), pitch=float("nan")))
+            last = r["t"]
+    w.timer = list(log.timer)
+    return w
+
+
+def test_watch_boat_in_a_race(demo_dir):
+    names = {"mojo": "Mojo", "wet_leopard": "Wet Leopard", "sea_biscuit": "Sea Biscuit", "knot_fast": "Knot Fast"}
+    logs = {names[p.stem]: vkx.parse_file(p) for p in sorted(demo_dir.glob("*.vkx"))}
+    full = analysis.build_race(list(logs.items()))
+    logs["Mojo"] = _as_watch(logs["Mojo"])
+    r = analysis.build_race(list(logs.items()))
+    by = {b["name"]: b["summary"] for b in r["boats"]}
+    was = {b["name"]: b["summary"] for b in full["boats"]}
+    assert by["Mojo"]["device"] == "watch" and by["Wet Leopard"]["device"] == "atlas"
+    assert {n: s["position"] for n, s in by.items()} == {n: s["position"] for n, s in was.items()}
+    assert abs(by["Mojo"]["up_vmg"] - was["Mojo"]["up_vmg"]) < 0.15
+    assert by["Mojo"]["heel_vs_vmg"] == [] and by["Mojo"]["up_heel"] is None
+    assert by["Mojo"]["heading_offset"] is None and by["Mojo"]["up_leeway"] is None
+    assert any("GPS watch" in n for n in r["meta"]["notes"])
+    json.dumps(r)                                                  # NaN-free, page-ready
+
+
+def test_merge_prefers_atlas_over_watch(demo_dir):
+    from sailreplay.site import merge_logs
+    atlas = vkx.parse_file(sorted(demo_dir.glob("*.vkx"))[0])
+    watch = _as_watch(atlas)
+    mid = (atlas.start_ms + atlas.end_ms) // 2
+    part = vkx.VkxLog(source="a", log_rate_hz=atlas.log_rate_hz)        # the Atlas missed the second half
+    part.track = [r for r in atlas.track if r["t"] < mid]
+    m = merge_logs([part, watch], "boat")
+    assert m.device == "atlas"
+    from_watch = [r for r in m.track if math.isnan(r["heel"])]
+    assert from_watch and min(r["t"] for r in from_watch) > part.end_ms + 10_000
+    assert len([r for r in m.track if r["t"] <= part.end_ms]) == len(part.track)
+    # a watch's per-race files join into one watch log
+    a, b = _as_watch(part), _as_watch(atlas)
+    b.track = [r for r in b.track if r["t"] >= mid]
+    j = merge_logs([a, b], "boat")
+    assert j.device == "watch" and len(j.track) == len(a.track) + len(b.track)
+
+
+def test_site_reads_watch_files(tmp_path, demo_dir):
+    import shutil
+    from sailreplay import site
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    shutil.copy(WATCH_FIT, logs / "900_Hafen__25046482066_ACTIVITY.fit")
+    assert site.resolve_boat(logs / "900_Hafen__25046482066_ACTIVITY.fit", {},
+                             [{"sail": "900", "name": "Hafen"}]) == "900 Hafen"
+    info = site.build_site(logs, tmp_path / "out", fleet=[{"sail": "900", "name": "Hafen"}], log=lambda *a: None)
+    assert (tmp_path / "out" / "days" / "2026-11-08.html").exists()

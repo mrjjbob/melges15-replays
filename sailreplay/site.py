@@ -1,7 +1,7 @@
 """
-Build a whole fleet website from a folder of .vkx logs.
+Build a whole fleet website from a folder of logs.
 
-  logs/                 anyone's .vkx files, any names, any days
+  logs/                 anyone's .vkx files (Atlas) or .fit files (GPS watch), any names, any days
   site.json             optional: title, club, timezone, series (name/start/end/discards), labels
                         e.g. {"series": [{"name": "Frostbite Part 1", "start": "2026-11-07"}],
                               "labels": {"2026-03-22": "Test upload"}}
@@ -160,11 +160,32 @@ def boat_name_from_file(path: Path, boats_cfg: dict) -> str:
 
 
 def merge_logs(logs: list[vkx.VkxLog], source: str) -> vkx.VkxLog:
-    """One boat, several files the same day (two sessions, or a re-download): join them."""
+    """One boat, several files the same day (two sessions, a re-download, or a watch's one file
+    per race): join them. When a boat sent both its Atlas log and a watch's, the Atlas wins
+    wherever it was recording; the watch only fills time the Atlas missed."""
     if len(logs) == 1:
         return logs[0]
-    out = vkx.VkxLog(source=source, version=logs[0].version, log_rate_hz=logs[0].log_rate_hz,
-                     fixed_to_body=logs[0].fixed_to_body)
+    atlas = [l for l in logs if l.device != "watch"]
+    watch = [l for l in logs if l.device == "watch"]
+    if atlas and watch:
+        spans = [(l.start_ms - 10_000, l.end_ms + 10_000) for l in atlas if l.track]
+        def outside(t):
+            return not any(a <= t <= b for a, b in spans)
+        trimmed = []
+        for l in watch:
+            keep = vkx.VkxLog(source=l.source, log_rate_hz=l.log_rate_hz, fixed_to_body=l.fixed_to_body,
+                              device=l.device, device_name=l.device_name)
+            keep.track = [r for r in l.track if outside(r["t"])]
+            keep.timer = [r for r in l.timer if outside(r["t"])]
+            if keep.track:
+                trimmed.append(keep)
+        logs = atlas + trimmed
+        if len(logs) == 1:
+            return logs[0]
+    base = atlas[0] if atlas else logs[0]
+    out = vkx.VkxLog(source=source, version=base.version, log_rate_hz=base.log_rate_hz,
+                     fixed_to_body=base.fixed_to_body,
+                     device="atlas" if atlas else "watch", device_name=base.device_name)
     for name in ("track", "timer", "line", "shifts", "wind", "water", "depth", "load", "temperature", "declination"):
         rows = {}
         for l in logs:
@@ -203,7 +224,7 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
     logs_dir, out = Path(logs_dir), Path(out_dir)
     (out / "days").mkdir(parents=True, exist_ok=True)
 
-    files = sorted(p for p in logs_dir.rglob("*") if p.suffix.lower() == ".vkx" and p.is_file())
+    files = sorted(p for p in logs_dir.rglob("*") if p.suffix.lower() in vkx.LOG_SUFFIXES and p.is_file())
     by_day: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     problems = []
     for p in files:
@@ -212,7 +233,8 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
         except Exception as e:  # damaged file: report it, keep going
             problems.append(f"{p.name}: could not be read ({e})")
             continue
-        if len(lg.track) < 120:
+        # a watch file is often one race, recorded every few seconds: judge by time, not fixes
+        if len(lg.track) < 20 or lg.end_ms - lg.start_ms < 120_000:
             problems.append(f"{p.name}: too short to use")
             continue
         name = resolve_boat(p, boats_cfg, fleet or [])

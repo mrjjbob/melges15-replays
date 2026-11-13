@@ -2,7 +2,7 @@
 
 Race replays and debriefs for the fleet, built from Vakaros Atlas logs.
 
-**The website** is published from this repository with GitHub Pages. Every time a `.vkx` file is added to `logs/`, the site rebuilds itself in about two minutes.
+**The website** is published from this repository with GitHub Pages. Every time a `.vkx` file (or a GPS watch's `.fit`) is added to `logs/`, the site rebuilds itself in about two minutes.
 
 ## Add your race
 
@@ -15,6 +15,18 @@ Files from every boat on the same day are put together automatically: one page p
 You need a free GitHub account. If you are not a collaborator yet, GitHub offers to make your upload a pull request. It goes live once it is merged.
 
 **No GitHub account?** The fleet uploader in [`uploader/`](uploader) lets sailors email their file straight from the Vakaros Connect share button, or use a simple upload page. See its README to set it up.
+
+## No Vakaros? A GPS watch works too
+
+A boat without an Atlas can race on the site with a GPS watch. The site reads Garmin `.fit` files (and the `.zip` Garmin Connect's **Export File** saves).
+
+1. On the watch, set **Data Recording** to **Every Second** (Garmin's default "smart" saves a fix only every few seconds and can miss a quick tack).
+2. Record each race. Garmin's **Sail Race** activity with its countdown is fine: it starts a new activity per race, and the site joins a boat's files for the day. The countdown lap tells the site the watch's gun, which is used only for a start no Atlas timed.
+3. In Garmin Connect on a computer, open each race, click the gear icon, choose **Export File**, and send the files like a `.vkx`, **with your sail number** (Garmin's file names say nothing about the boat).
+
+What a watch gives: the replay, results, speeds, VMG, tacks and gybes, and its share of the wind estimate. What it can't: heel (no tilt sensor) or which way the bow points (its heading is the course over the ground), so watch boats are left out of the heel charts and marked "watch" in the results.
+
+Tested on 8 Nov 2026 against a mast-mounted Atlas on the same boat, five races: same finishing places in every race; elapsed time 2–8 s longer; upwind VMG within 0.1 kt; one tack missed in two of the races (on "smart" recording). The watch's fixes, speed included, run about 1.75 s behind the Atlas, so they are moved that much earlier when read. If a boat sends both its Atlas log and a watch's, the Atlas is used wherever it was recording.
 
 ## The fleet
 
@@ -100,6 +112,7 @@ pip install -e .
 sailreplay site logs -o _site      # build the website into _site/
 sailreplay download                # pull sessions off an Atlas over Bluetooth
 sailreplay day logs/*.vkx          # one day's page on its own
+sailreplay day "900 Hafen=a.fit" "900 Hafen=b.fit" 302.vkx   # one boat's per-race watch files, joined
 ```
 
 See `sailreplay/` for the parser, analysis and replay page. Tests: `python -m pytest tests`.

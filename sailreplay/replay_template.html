@@ -102,6 +102,7 @@ canvas#map.drag { cursor: grabbing; }
 .boat.pen .nm span { color: var(--bad); }
 .mode.pen { color: #fff; background: #b23c3c; border-color: #b23c3c; }
 td .pen { font: 600 10px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--bad); margin-left: 6px; }
+td .dev { font: 600 10px/1 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-left: 6px; }
 
 /* transport */
 .transport { display: grid; grid-template-columns: auto auto 1fr auto; gap: 14px; align-items: center; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-top: 1px solid var(--rule); background: var(--panel); }
@@ -884,7 +885,7 @@ function renderDebrief() {
   <div class="tbl"><table><thead><tr><th>Boat</th><th>Pos</th><th>Elapsed</th><th>Sailed</th><th>Avg speed</th><th>Upwind VMG</th><th>Upwind speed</th><th>Tack angle</th><th>Downwind VMG</th><th>Downwind speed</th><th>Upwind pace</th><th>Downwind pace</th><th>Tacks</th><th>Tack loss</th><th>Gybes</th><th>Gybe loss</th></tr></thead><tbody>`;
   for (const b of byPos) { const s = b.summary;
     const pk = [...new Set((b.penalties || []).map(p => ({ recall: "went back", turns: "turns", mark: "mark turn" })[p.kind]))];
-    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}${pk.map(k => `<span class="pen">${k}</span>`).join("")}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}${cell(s.up_pace, "up_pace", 0, true, "%")}${cell(s.down_pace, "down_pace", 0, true, "%")}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
+    h += `<tr><td class="nm">${dot(b)}${esc(b.name)}${b.summary.device === "watch" ? `<span class="dev" title="Sailed with a GPS watch: no heel, heading from the course">watch</span>` : ""}${pk.map(k => `<span class="pen">${k}</span>`).join("")}</td><td>${s.position}</td><td>${s.elapsed_s != null ? fmtClock(s.elapsed_s) : "—"}</td><td>${s.distance_m != null ? (s.distance_m / 1000).toFixed(2) + " km" : "—"}</td>${cell(s.avg_sog, "avg_sog", 2)}${cell(s.up_vmg, "up_vmg", 2)}${cell(s.up_sog, "up_sog", 2)}<td>${s.up_twa != null ? s.up_twa * 2 + "°" : "—"}</td>${cell(s.dn_vmg, "dn_vmg", 2)}${cell(s.dn_sog, "dn_sog", 2)}${cell(s.up_pace, "up_pace", 0, true, "%")}${cell(s.down_pace, "down_pace", 0, true, "%")}<td>${s.tacks}</td>${cell(s.tack_loss_m, "tack_loss_m", 1, false, " m")}<td>${s.gybes}</td>${cell(s.gybe_loss_m, "gybe_loss_m", 1, false, " m")}</tr>`; }
   h += `</tbody></table></div></div>`;
 
   const WS = R.wind.speed || {};
@@ -930,7 +931,7 @@ function renderDebrief() {
   }
   h += `<div class="charts">
     <div class="chartcard"><h3>Speed through the race</h3><p class="note">Boat speed, 20-second average. Dashed lines are mark roundings, filled dots tacks and open dots gybes. Click to jump the replay there.</p><canvas id="spdChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
-    <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward, steady sailing only (tacks and roundings left out). ${heelNote()} Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
+    <div class="chartcard"><h3>Upwind VMG by heel</h3><p class="note">Average upwind VMG at each 2° band of heel to leeward, steady sailing only (tacks and roundings left out). ${heelNote()} Where the line peaks is that boat's fastest heel.</p><canvas id="heelChart"></canvas><div class="legend">${boats.filter(b => b.summary.device !== "watch").map(b => `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div></div>
     <div class="chartcard wide"><h3>Sailing the shifts</h3><p class="note">Share of the time each boat was on the tack or gybe the current shift favours. Upwind that is the lifted tack: starboard when the wind has gone right of the race average (${R.wind.twd_avg ?? "—"}°), port when it has gone left. Downwind it is the gybe pointing closer to the leeward mark, the opposite one. Only time with the wind ${3}° or more off the average counts; 50% is what you'd get by chance. Shifts are estimated from the fleet's tacks${boats.length === 1 ? ", so with one boat they are rough" : ""}.</p><canvas id="phaseChart"></canvas><div class="legend"><span><i style="background:var(--ink)"></i>Upwind (lifted tack)</span><span><i style="background:var(--muted)"></i>Downwind (favoured gybe)</span><span><i style="background:var(--accent)"></i>50% = chance</span></div></div>
   </div>`;
 

@@ -115,7 +115,16 @@ def find_guns(logs: list[VkxLog]) -> list[int]:
     Timers disagree: people start the countdown late and do not always sync it on the next
     signal. So timer guns within 90 s of each other are one start, and the gun is taken from the
     boats that synced their timer when any did (a synced timer is right on the signal), otherwise
-    the median."""
+    the median.
+
+    A GPS watch's race timer counts only for a start no Atlas timed: watches can't be synced to
+    a signal the way the Atlas can, and one started late is a whole minute out."""
+    atlas = [l for l in logs if getattr(l, "device", "atlas") != "watch"]
+    watch = [l for l in logs if getattr(l, "device", "atlas") == "watch"]
+    if atlas and watch:
+        guns = find_guns(atlas)
+        extra = [g for g in find_guns(watch) if all(abs(g - a) >= 90_000 for a in guns)]
+        return sorted(guns + extra)
     cands = []                                         # (gun ms, synced)
     for log in logs:
         ev = sorted(log.timer, key=lambda e: e["t"])
@@ -1232,7 +1241,13 @@ def build_race(boats: list[tuple[str, VkxLog]], *, twd: float | None = None, gun
     grid = np.arange(t0, t1 + 1, step, dtype=np.int64)
     n = len(grid)
     for s in series:
-        _resample(s, grid, heel_offsets.get(s.name, 0.0))
+        # a watch on "smart" recording saves a fix every few seconds, sometimes 10 s apart: bridge those
+        _resample(s, grid, heel_offsets.get(s.name, 0.0), max_gap_ms=6500 if s.log.device == "watch" else 4000)
+    watches = [s.name for s in series if s.log.device == "watch"]
+    if watches:
+        notes.append(f"{', '.join(watches)} sailed with a GPS watch instead of an Atlas: no heel, and the boat's "
+                     "heading is its course over the ground, so watch boats are left out of the heel charts. "
+                     "A watch that saves a fix only every few seconds can miss a quick tack.")
 
     lat0 = float(np.nanmean(np.concatenate([s.lat for s in series])))
     lon0 = float(np.nanmean(np.concatenate([s.lon for s in series])))
@@ -1931,7 +1946,11 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
         "made_good_m": _r(mg[-1], 0),
         "heading_offset": _r(hdg_offset, 1),
         "up_leeway": _r(leeway, 1),
+        "device": s.log.device,
     }
+    if s.log.device == "watch":
+        # a watch's "heading" is its course, so there is no mounting error or leeway to read
+        summary["heading_offset"] = summary["up_leeway"] = None
     if up.any():
         # heel and VMG over 3 s, so a wave or a gust's roll doesn't throw a reading into the wrong bin
         k3 = max(1, int(3 * hz))
