@@ -1684,6 +1684,8 @@ def _analyse_boat(s: BoatSeries, grid, hz, gun_i, twd, u, ref, line, gun_ms, fin
     sog = s.sog
     cog_s = circ_smooth(s.cog, max(1, int(2 * hz)))
     res = {"name": s.name, "color": s.color, "source": s.log.source}
+    if getattr(s.log, "device", None) == "watch":
+        res["device"] = "watch"                        # a position every few seconds: drawn faint and dashed
     have_wind = twd is not None
     if have_wind:
         twa = wrap180(twd - cog_s)
