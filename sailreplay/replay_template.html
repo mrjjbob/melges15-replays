@@ -271,7 +271,7 @@ const DAY = DATA.day || null;
 const APP = document.querySelector(".app"), APP_HTML = APP.innerHTML;
 let ctl = null, cur = null;
 // settings that carry from race to race (cycling rebuilds the page for each race)
-const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, trailMode: "pace", loop: false, orient: "wind", notes: new Set() };
+const SESSION = { cycle: false, autoplay: false, speed: 10, trail: 120, trailMode: "vmgc", loop: false, orient: "wind", notes: new Set() };
 function parseHash() {
   const h = location.hash.slice(1), m = /^r(\d+)(?:-(debrief|advanced))?$/.exec(h);
   if (m) return { k: Math.min(RACES.length - 1, Math.max(0, +m[1] - 1)), view: m[2] || "replay" };
@@ -393,11 +393,13 @@ const VMG_REF = (() => {
 })();
 const HAS_VMG = VMG_REF.up != null && boats.some(b => b.track.vmg);
 // width modes thicken the trail with pace or VMG; colour modes paint it red when up to speed, blue when down, grey in between
-const TRAIL_MODES = [["pace", "Pace width"], ["pacec", "Pace colour"], ["vmg", "VMG width"], ["vmgc", "VMG colour"], ["plain", "Plain trail"]]
-  .filter(([k]) => (!k.startsWith("pace") || HAS_PACE) && (!k.startsWith("vmg") || HAS_VMG));
+// (a plain trail only when there is neither pace nor VMG to show)
+const TRAIL_MODES = (m => m.length ? m : [["plain", "Plain trail"]])(
+  [["vmgc", "VMG colour"], ["vmg", "VMG width"], ["pacec", "Pace colour"], ["pace", "Pace width"]]
+    .filter(([k]) => (!k.startsWith("pace") || HAS_PACE) && (!k.startsWith("vmg") || HAS_VMG)));
 const trailBase = () => state.trailMode.startsWith("vmg") ? "vmg" : state.trailMode.startsWith("pace") ? "pace" : "plain";
 const trailColour = () => state.trailMode.endsWith("c");
-if (!TRAIL_MODES.some(m => m[0] === SESSION.trailMode)) SESSION.trailMode = TRAIL_MODES[0][0];
+if (!TRAIL_MODES.some(m => m[0] === SESSION.trailMode)) SESSION.trailMode = (TRAIL_MODES.find(m => m[0] === "pacec") || TRAIL_MODES[0])[0];
 function trailPct(b, i) {
   if (trailBase() === "pace") return b.track.pace ? b.track.pace[i] : null;
   const md = b.track.mode[i], v = b.track.vmg[i], ref = md === "up" ? VMG_REF.up : md === "down" ? VMG_REF.down : null;
