@@ -1125,16 +1125,16 @@ function advWatchNote(c, w, h, any) {
   c.fillText("dashed: watch data, a position every ~4 s", w - 10, 12); c.restore();
 }
 const advWatchBoats = () => { const s = new Set(); RACES.forEach(r => r.boats.forEach(b => { if (b.device === "watch") s.add(b.name); })); return s; };
-function advLines(id, T, series, key, yl, note) {
+function advLines(id, T, series, key, yl, note, plain) {
   const [cv, c, w, h] = chartCanvas(id);
   const vals = series.flatMap(s => s[key]).filter(isFinite);
   if (!vals.length) { c.fillStyle = C.muted; c.font = "500 13px " + cssv("--f-body"); c.fillText(note || "None in the races picked.", 50, 40); return; }
   let y0 = Math.min(...vals), y1 = Math.max(...vals); const pad = Math.max(0.2, (y1 - y0) * 0.08); y0 -= pad; y1 += pad;
   const [X, Y, L, B, Tp] = axes(c, w, h, T[0], T[T.length - 1], y0, y1, "s from " + (note || "event"), yl);
   c.strokeStyle = "rgba(242,179,61,.55)"; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(0), Tp); c.lineTo(X(0), h - B); c.stroke(); c.setLineDash([]);
-  for (const s of series) { c.strokeStyle = s.color; c.lineWidth = 2; watchStyle(c, s.watch); c.beginPath(); let on = false;
+  for (const s of series) { c.strokeStyle = s.color; c.lineWidth = 2; watchStyle(c, s.watch && !plain); c.beginPath(); let on = false;
     s[key].forEach((v, j) => { if (!isFinite(v)) { on = false; return; } if (on) c.lineTo(X(T[j]), Y(v)); else { c.moveTo(X(T[j]), Y(v)); on = true; } }); c.stroke(); watchStyle(c, false); }
-  advWatchNote(c, w, h, series.some(s => s.watch));
+  advWatchNote(c, w, h, !plain && series.some(s => s.watch));
 }
 // tracks overlaid in a frame of their own: metres, wind (or the course side) up
 function advOverlay(id, paths, opt = {}) {
@@ -1162,8 +1162,7 @@ function advOverlay(id, paths, opt = {}) {
     if (p.gold) { c.save(); c.strokeStyle = GOLD; c.globalAlpha = 0.45; c.lineWidth = 4; c.shadowColor = GOLD; c.shadowBlur = 3; c.beginPath(); let o2 = false;
       p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { o2 = false; return; } if (o2) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); o2 = true; } }); c.stroke(); c.restore(); c.lineWidth = 1.8; }
     else c.lineWidth = 1.6;
-    c.strokeStyle = p.color; c.globalAlpha = p.gold ? 1 : (p.alpha ?? 0.8) * (p.watch ? WATCH_ALPHA / 0.8 : 1);
-    if (p.watch) c.setLineDash([5, 4]);
+    c.strokeStyle = p.color; c.globalAlpha = p.gold ? 1 : (p.alpha ?? 0.8);
     c.beginPath(); let on = false;
     p.pts.forEach(([x, y]) => { if (!isFinite(x) || !isFinite(y)) { on = false; return; } if (on) c.lineTo(sx(x), sy(y)); else { c.moveTo(sx(x), sy(y)); on = true; } }); c.stroke();
     c.setLineDash([]);
@@ -1179,11 +1178,10 @@ function advOverlay(id, paths, opt = {}) {
   if (opt.over) opt.over(c, sx, sy, sc);
   c.font = "500 11px " + cssv("--f-data"); c.fillStyle = C.muted; c.textAlign = "left";
   c.fillText(`grid ${step} m · ${opt.up || "wind"} up`, 10, h - 10);
-  if (paths.some(p => p.watch) && !opt.noWatchNote) { c.textAlign = "left"; c.fillText("dashed: watch data, a position every ~4 s", 10, h - 42); }
 }
-function advLegend(byPlace) {
+function advLegend(byPlace, plain) {
   if (byPlace) return `<span><i style="background:${placeColour(1, 5)}"></i>Won the race</span><span><i style="background:${placeColour(3, 5)}"></i>Middle</span><span><i style="background:${placeColour(5, 5)}"></i>Last</span>`;
-  const wb = advWatchBoats();
+  const wb = plain ? new Set() : advWatchBoats();
   return advBoats().filter(b => !ADV.off.has(b.name)).map(b => wb.has(b.name)
     ? `<span title="Garmin watch: a position every few seconds"><i style="background:repeating-linear-gradient(90deg, ${b.color} 0 4px, transparent 4px 7px);opacity:${WATCH_ALPHA}"></i>${esc(b.name)} (watch)</span>`
     : `<span><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join("");
@@ -1319,11 +1317,11 @@ function renderAdvanced() {
   const el = $("advanced");
   const pick = advRaces(), allB = advBoats(), byPlace = ADV.colour === "place";
   const chip = (attr, val, on, label, dot) => `<button class="chip" ${attr}="${esc(val)}" aria-pressed="${on}">${dot ? `<i style="background:${dot}"></i>` : ""}${esc(label)}</button>`;
-  let h = `<div><h2>Advanced</h2><p class="note">Every race ${DAY && DAY.days ? "of the regatta, all " + DAY.days.length + " days," : "of the day"} laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.${advWatchBoats().size ? ` <b>Dashed, faint lines are watch data</b> (${[...advWatchBoats()].map(esc).join(", ")}): a Garmin watch saves a position only every few seconds (about 4 s), joined up in straight lines here, so its tacks, gybes and roundings look smoother and rounder than they were sailed, and it has no compass or heel for those charts. Its times, speeds and VMG over a leg are fine.` : ""}</p>
+  let h = `<div><h2>Advanced</h2><p class="note">Every race ${DAY && DAY.days ? "of the regatta, all " + DAY.days.length + " days," : "of the day"} laid over each other. Pick the races and boats to include. Averages here, like the debrief's, use only steady sailing: tacks, gybes, mark roundings and the first 20 s after the gun are left out.${advWatchBoats().size ? ` <b>In the tack and gybe windows, dashed faint lines are watch data</b> (${[...advWatchBoats()].map(esc).join(", ")}): a Garmin watch saves a position only every few seconds (about 4 s), joined up in straight lines here, so its averages through a turn look smoother than it was sailed, and it has no compass or heel for those charts. Its times, speeds and VMG over a leg are fine.` : ""}</p>
   <div class="advbar"><span class="k">Races</span>${chip("data-all", "1", pick.length === RACES.length, "All")}${RACES.map((r, k) => (DAY && DAY.days && (k === 0 || r.meta.day_idx !== RACES[k - 1].meta.day_idx) ? `<span class="dk">${esc((DAY.days[r.meta.day_idx] || {}).label || "")}</span>` : "") + chip("data-race", k, pick.includes(k), "R" + (k + 1))).join("")}</div>
   ${allB.length > 1 ? `<div class="advbar"><span class="k">Boats</span>${allB.map(b => chip("data-boat", b.name, !ADV.off.has(b.name), b.name, b.color)).join("")}</div>` : ""}
   <div class="advbar"><span class="k">Overlays</span>${chip("data-colour", "boat", !byPlace, "Colour by boat")}${allB.length > 1 ? chip("data-colour", "place", byPlace, "Colour by finish place") : ""}</div></div>`;
-  const card = (id, title, note, wide, tall, legend = true, tools = "", below = "") => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><div class="ovwrap"><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${tools}</div>${below}${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace) : advLegend(false)}</div>` : ""}</div>`;
+  const card = (id, title, note, wide, tall, legend = true, tools = "", below = "") => `<div class="chartcard${wide ? " wide" : ""}"><h3>${title}</h3><p class="note">${note}</p><div class="ovwrap"><canvas id="${id}"${tall ? ' class="tall"' : ""}></canvas>${tools}</div>${below}${legend ? `<div class="legend">${legend === "place" ? advLegend(byPlace, true) : advLegend(false, legend === "plain")}</div>` : ""}</div>`;
   h += `<div><h2>Tack windows</h2><p class="note">Every tack averaged per boat, from 10 s before head to wind (0) to 30 s after. The VMG bump just before 0 is the boat shooting into the wind; the dip after is the cost of the tack.</p><div class="charts">
     ${card("advTackVmg", "VMG", "Knots towards the wind.")}${card("advTackSog", "Speed", "Knots over the ground.")}
     ${card("advTackTwa", "Wind angle", "Degrees off the wind, either tack.")}${card("advTackHeel", "Heel", "Degrees to leeward; it flips side at head to wind.")}</div></div>`;
@@ -1347,7 +1345,7 @@ function renderAdvanced() {
     ${card("advGybes", "Every gybe", `From 10 s before dead downwind to ${ADV.after || 30} s after, wind up so boats sail down the page.${ADV.mirror ? " Mirrored to go the same way." : ""} The gold one made the most distance downwind by the end.`, false, true, "place", mirrorChip)}</div></div>`;
   h += `<div><h2>Mark roundings</h2><div class="charts">
     ${card("advRound", ADV.mark === "windward" ? "Every windward rounding" : "Every leeward rounding", (ADV.mark === "windward" && ADV.pin === "offset" && hasKind("offset") ? "Lined up on the windward offset (red), where the boats bear away, from 45 s before to 30 s after, so you can see where the boats turned down. " : ADV.mark === "leeward" && ADV.gate !== "merge" && hasGate() ? "A leeward gate shows as its two marks, each rounding on the one it went round, the marks where they lie on average from the middle of the gate. " : "") + "30 s either side of passing the mark (the dot), wind up. The dotted circle is the three-length zone. Where a track leaves shows the exit angle; the boat shapes are 30 s after the mark. The gold one got furthest towards the next mark by then, in that boat's colour.", true, true, "place", `<div class="ovtools">${chip("data-mark", "windward", ADV.mark === "windward", "Windward")}${chip("data-mark", "leeward", ADV.mark === "leeward", "Leeward")}${ADV.mark === "windward" && hasKind("offset") ? chip("data-pin", ADV.pin === "offset" ? "mark" : "offset", ADV.pin === "offset", "Pin offset") : ""}${ADV.mark === "leeward" && hasGate() ? chip("data-gate", ADV.gate === "merge" ? "gate" : "merge", ADV.gate === "merge", "Merge gate") : ""}</div>`)}
-    ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.")}
+    ${card("advRoundSog", "Speed through the rounding", "Averaged per boat, 0 = passing the mark.", false, false, "plain")}${card("advRoundTwa", "Wind angle through the rounding", "Degrees off the wind. Upwind boats are near 45°; how soon the line climbs after 0 is how quickly they bore away.", false, false, "plain")}
     <div class="chartcard wide"><h3>Rounding numbers</h3><div class="tbl" id="advRoundTbl"></div></div></div></div>`;
   h += `<div><h2>Heel</h2><div class="charts">
     ${card("advHeel", "Upwind VMG by heel, all races", "Steady upwind sailing only, in 1° bands. Heel is smoothed for each race's sea state (longer in a chop, shorter on flat water); VMG over 2 s. The brighter and bigger a point, the more time that boat spent at that heel; faint, small points (hollow under 6 s) are a few seconds and easily a fluke. The gold line is the ideal heel: where VMG peaks with every boat picked pooled together, with bands that have little time pulled towards the average so they can't win on a lucky gust. VMG is often flat over a range of heel: the shaded band is every heel within 1.5% of the best, the line its middle, and the label says how much sailing it rests on.")}
@@ -1454,8 +1452,7 @@ function drawAdvanced() {
       const gain = end && isFinite(end[1]) ? (kind === "tack" ? end[1] : -end[1]) : null;
       return { color: col(P, B), alpha: 0.7, pts, gain, who: B.name, race: P.k + 1, watch: B.watch };
     });
-    // a watch's straight lines between fixes cut corners, so it can't be the best one
-    let best = null; for (const q of paths) if (q.gain != null && !q.watch && (!best || q.gain > best.gain)) best = q;
+    let best = null; for (const q of paths) if (q.gain != null && (!best || q.gain > best.gain)) best = q;
     if (best) { best.gold = true; paths.splice(paths.indexOf(best), 1); paths.push(best); }
     advOverlay(id, paths, { centre: true, empty: `No ${kind}s in the races picked.`,
       over: (c, sx, sy) => { c.fillStyle = C.accent; c.beginPath(); c.arc(sx(0), sy(0), 3, 0, 7); c.fill();
@@ -1496,7 +1493,7 @@ function drawAdvanced() {
       wmarks.push({ k: P.k, src: e.wmark, xy: rotTo(e.wmark[0] - mark[0], e.wmark[1] - mark[1], twdOf(e)) }); }
     return { color: col(P, B), pts, alpha: 0.75, gain, who: B.name, race: P.k + 1, watch: B.watch };
   });
-  let rBest = null; for (const q of rPaths) if (q.gain != null && !q.watch && (!rBest || q.gain > rBest.gain)) rBest = q;
+  let rBest = null; for (const q of rPaths) if (q.gain != null && (!rBest || q.gain > rBest.gain)) rBest = q;
   if (rBest) { rBest.gold = true; rPaths.splice(rPaths.indexOf(rBest), 1); rPaths.push(rBest); }
   const centres = gateOn ? Object.values(G) : [[0, 0]];
   const pinOff = rd.some(e => e.pinned);
@@ -1520,7 +1517,7 @@ function drawAdvanced() {
       if (rBest) { c.fillStyle = GOLD; c.font = "600 12px " + cssv("--f-data"); c.textAlign = "right";
         c.fillText(`best: ${rBest.who} · R${rBest.race} · ${Math.round(rBest.gain)} m ${ADV.mark === "windward" ? "downwind" : "upwind"} 30 s after the ${pinOff ? "offset" : "mark"}`, c.canvas.clientWidth - 10, c.canvas.clientHeight - 10); c.textAlign = "left"; } } });
   const rw = advWindow(rd, -20, 40, ["sog", "twa"]);
-  advLines("advRoundSog", rw.T, rw.series, "sog", "speed kt", "mark"); advLines("advRoundTwa", rw.T, rw.series, "twa", "TWA °", "mark");
+  advLines("advRoundSog", rw.T, rw.series, "sog", "speed kt", "mark", true); advLines("advRoundTwa", rw.T, rw.series, "twa", "TWA °", "mark", true);
   const per = new Map();
   for (const e of rd) { const { P, B, i0, dist } = e; const at = s => B.sog[Math.min(B.n - 1, i0 + Math.round(s * P.hz))], ta = s => Math.abs(B.twa[Math.min(B.n - 1, i0 + Math.round(s * P.hz))]);
     let r = per.get(B.name); if (!r) per.set(B.name, r = { color: B.color, n: 0, d: [], s0: [], s10: [], s20: [], a10: [], in10: [] });
