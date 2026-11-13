@@ -36,6 +36,10 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 - **Wind speed** from boat speed: upwind speed barely changes once a Melges 15 is powered up, so when a boat's downwind legs (at least a minute of them) say 10 kt or more, its upwind readings are left out. Downwind speeds past the target table count as at least that wind, up to 18 kt, rather than being dropped.
 - **Which side paid** is now against the fleet's own average on that point of sail (100%), so the sides compare directly whatever the target speeds get wrong. Per-boat and per-leg pace are still against target speed.
 
+## Replay trails
+
+The trail button on the replay steps through **Pace width**, **Pace colour**, **VMG width**, **VMG colour** and **Plain trail**. Pace is speed against the target for the race's wind; VMG is against the fleet's average upwind or downwind VMG. In the colour modes the trail is red when a boat is up to speed (red at 115% and over), blue when it is down (blue at 85% and under) and grey within 5% of 100%, so a boat building speed out of a tack shows blue fading to grey. Settings: `SPEED_BAND`, `SPEED_FULL` in the replay template.
+
 ## Steady sailing and the Advanced tab
 
 Averages (upwind and downwind speed, VMG, wind angle and heel, per race and per leg), the heel-vs-VMG chart, pace and the wind speed read from boat speed all use **steady sailing** only. Each tack is left out from 5 s before head to wind to 12 s after, each gybe from 6 s before to 15 s after (longer when a boat was slow to get back up to speed), plus mark roundings, the first 20 s after the gun and the last 5 s before the finish. The windows are `MANOEUVRE_WINDOW_S` in `sailreplay/analysis.py`. Distance sailed, elapsed time and made good still use every second.
