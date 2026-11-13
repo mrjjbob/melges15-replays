@@ -165,6 +165,8 @@ def merge_logs(logs: list[vkx.VkxLog], source: str) -> vkx.VkxLog:
         return logs[0]
     out = vkx.VkxLog(source=source, version=logs[0].version, log_rate_hz=logs[0].log_rate_hz,
                      fixed_to_body=logs[0].fixed_to_body)
+    if any(getattr(l, "device", None) == "watch" for l in logs):
+        out.device = "watch"
     for name in ("track", "timer", "line", "shifts", "wind", "water", "depth", "load", "temperature", "declination"):
         rows = {}
         for l in logs:
@@ -203,12 +205,16 @@ def build_site(logs_dir: str | Path, out_dir: str | Path, *, boats_cfg: dict | N
     logs_dir, out = Path(logs_dir), Path(out_dir)
     (out / "days").mkdir(parents=True, exist_ok=True)
 
-    files = sorted(p for p in logs_dir.rglob("*") if p.suffix.lower() == ".vkx" and p.is_file())
+    files = sorted(p for p in logs_dir.rglob("*") if p.suffix.lower() in (".vkx", ".fit") and p.is_file())
     by_day: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     problems = []
     for p in files:
         try:
-            lg = vkx.parse_file(p)
+            if p.suffix.lower() == ".fit":            # a Garmin watch's sail race activity
+                from . import fit
+                lg = fit.parse_file(p)
+            else:
+                lg = vkx.parse_file(p)
         except Exception as e:  # damaged file: report it, keep going
             problems.append(f"{p.name}: could not be read ({e})")
             continue
