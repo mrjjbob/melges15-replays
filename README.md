@@ -38,7 +38,7 @@ Anything else shows under its file name. Add each boat's Atlas serial once and i
 
 ## Replay trails
 
-The trail button on the replay steps through **Pace width**, **Pace colour**, **VMG width**, **VMG colour** and **Plain trail**. Pace is speed against the target for the race's wind; VMG is against the fleet's average upwind or downwind VMG. In the colour modes the trail is red when a boat is up to speed (red at 115% and over), blue when it is down (blue at 85% and under) and grey within 5% of 100%, so a boat building speed out of a tack shows blue fading to grey. Settings: `SPEED_BAND`, `SPEED_FULL` in the replay template.
+The trail button on the replay steps through **VMG colour** (the default), **VMG width**, **Pace colour** and **Pace width**. Pace is speed against the target for the race's wind; VMG is against the fleet's average upwind or downwind VMG. In the colour modes the trail is red when a boat is up to speed (red at 115% and over), blue when it is down (blue at 85% and under) and grey within 5% of 100%, so a boat building speed out of a tack shows blue fading to grey. Settings: `SPEED_BAND`, `SPEED_FULL` in the replay template.
 
 ## Steady sailing and the Advanced tab
 
